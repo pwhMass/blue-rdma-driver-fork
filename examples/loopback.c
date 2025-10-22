@@ -94,6 +94,13 @@ int run_single_mr(int msg_len) {
   if (!dev_list) {
     die("Failed to get device list");
   }
+  printf("Found %d RDMA devices\n", num_devices);
+  if (num_devices == 0 || !dev_list[0]) {
+    fprintf(stderr, "No RDMA devices found!\n");
+    fprintf(stderr, "For simulation mode, ensure libbluerdma_rust.so is in LD_LIBRARY_PATH\n");
+    exit(1);
+  }
+  printf("Opening device: %s\n", ibv_get_device_name(dev_list[0]));
   printf("before ibv_open_device\n");
   context = ibv_open_device(dev_list[0]);
 
@@ -227,7 +234,7 @@ int run_single_mr(int msg_len) {
     //     } 
     // }
     printf("round: %d,", round);
-    // cnt_error = memory_diff(src_buffer, dst_buffer, msg_len);
+    cnt_error = memory_diff(src_buffer, dst_buffer, msg_len);
     cnt_valid = msg_len - cnt_error;
     
     COMPILER_BARRIER();

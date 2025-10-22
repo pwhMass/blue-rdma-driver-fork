@@ -70,13 +70,13 @@ Then, navigate to the `examples` directory, compile them, and run:
 cd examples
 make
 # if use RTL simulator do debug, use the following:
-# make EXTRA_CFLAGS=-DCOMPILE_FOR_RTL_SIMULATOR_TEST
+make EXTRA_CFLAGS=-DCOMPILE_FOR_RTL_SIMULATOR_TEST
 export LD_LIBRARY_PATH=../dtld-ibverbs/target/debug:../dtld-ibverbs/rdma-core-55.0/build/lib
 RUST_LOG=debug ./loopback 8192
 
 
-setpci  -s 01:00.0 COMMAND=0x02
-setpci  -s 01:00.0 98.b=0x16
-setpci  -s 01:00.0 CAP_EXP+28.w=0x1000
+# setpci  -s 01:00.0 COMMAND=0x02
+# setpci  -s 01:00.0 98.b=0x16
+# setpci  -s 01:00.0 CAP_EXP+28.w=0x1000
 
 ```
