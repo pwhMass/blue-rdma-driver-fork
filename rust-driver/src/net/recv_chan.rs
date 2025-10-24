@@ -33,6 +33,7 @@ pub(crate) trait PostRecvRx: Sized {
 }
 
 const BASE_PORT: u16 = 60000;
+const PORT_RANGE: u32 = 5535;  // 使用端口范围 60000-65534
 
 pub(crate) struct TcpChannel;
 
@@ -108,8 +109,10 @@ pub(crate) fn post_recv_channel<C: PostRecvChannel>(
 }
 
 fn qpn_to_port(qpn: u32) -> u16 {
-    let index = qpn_to_index(qpn);
-    BASE_PORT + index as u16
+    // 使用 Fibonacci 哈希将 QPN 的所有 32 位混合
+    // 0x9E3779B9 = 2^32 / φ (黄金比例)，提供良好的位分布
+    let hash = qpn.wrapping_mul(0x9E3779B9);
+    BASE_PORT + (hash % PORT_RANGE) as u16
 }
 
 pub(crate) struct PostRecvTxTable<Tx = TcpChannelTx> {
@@ -196,9 +199,23 @@ mod tests {
 
     #[test]
     fn test_qpn_to_port() {
-        assert_eq!(qpn_to_port(0), BASE_PORT);
-        assert_eq!(qpn_to_port(1 << 8), BASE_PORT + 1);
-        assert_eq!(qpn_to_port(2 << 8), BASE_PORT + 2);
+        // 测试端口范围在有效区间内
+        for qpn in [0, 1 << 8, 2 << 8, 0x1f4, 0x194, 0xFFFFFFFF] {
+            let port = qpn_to_port(qpn);
+            assert!(port >= BASE_PORT && port < BASE_PORT + PORT_RANGE as u16,
+                    "Port {} for QPN 0x{:x} is out of range [{}, {})",
+                    port, qpn, BASE_PORT, BASE_PORT + PORT_RANGE as u16);
+        }
+
+        // 测试确定性：相同 QPN 总是映射到相同端口
+        let qpn = 0x1f4;
+        assert_eq!(qpn_to_port(qpn), qpn_to_port(qpn));
+
+        // 测试不同 QPN（即使 index 相同但 key 不同）产生不同端口
+        let qpn1 = 0x1f4;  // index=1, key=0xf4
+        let qpn2 = 0x194;  // index=1, key=0x94
+        assert_ne!(qpn_to_port(qpn1), qpn_to_port(qpn2),
+                   "Different QPNs with same index should map to different ports");
     }
 
     #[test]

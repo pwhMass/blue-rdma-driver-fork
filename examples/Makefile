@@ -3,6 +3,10 @@ CFLAGS = -Wall -Wextra -g
 LDFLAGS =
 LIBS = -libverbs
 
+# Enable RTL simulator support with: make SIMULATOR=1
+ifdef SIMULATOR
+CFLAGS += -DCOMPILE_FOR_RTL_SIMULATOR_TEST
+endif
 
 ifneq ($(EXTRA_CFLAGS),)
 CFLAGS += $(EXTRA_CFLAGS)
