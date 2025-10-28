@@ -383,6 +383,7 @@ where
         if qp.dqpn != 0 && qp.dqp_ip != 0 && self.post_recv_tx_table.get_qp_mut(qpn).is_none() {
             let dqp_ip = Ipv4Addr::from_bits(qp.dqp_ip);
             debug!("update_qp get dqp_ip={dqp_ip:?}");
+            //TODO 这里不会有并发问题吗？在 qp 准备好之后，马上 post_recv，会不会出现问题？
             let (tx, rx) =
                 post_recv_channel::<TcpChannel>(qp.ip.into(), qp.dqp_ip.into(), qpn, qp.dqpn)?;
             debug!("after create post recv tx and rx table");
