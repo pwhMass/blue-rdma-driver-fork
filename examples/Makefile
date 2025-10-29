@@ -12,7 +12,7 @@ ifneq ($(EXTRA_CFLAGS),)
 CFLAGS += $(EXTRA_CFLAGS)
 endif
 
-TARGETS = loopback send_recv
+TARGETS = loopback send_recv rdma_client_server
 
 all: $(TARGETS)
 
@@ -20,6 +20,9 @@ loopback: loopback.c
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) $(LIBS)
 
 send_recv: send_recv.c
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) $(LIBS)
+
+rdma_client_server: rdma_client_server.c
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) $(LIBS)
 
 clean:
@@ -35,4 +38,4 @@ run_loopback: loopback
 	RUST_LOG=debug ./loopback 1
 	
 
-.PHONY: all clean loopback send_recv
+.PHONY: all clean loopback send_recv rdma_client_server
