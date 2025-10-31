@@ -35,6 +35,7 @@ pub(crate) const WR_CHUNK_SIZE: u32 = 0x10000;
 /// Ack timeout config
 pub(crate) const DEFAULT_INIT_RETRY_COUNT: usize = 5;
 pub(crate) const DEFAULT_TIMEOUT_CHECK_DURATION: u8 = 8;
+// 这对吗？太大了吧
 pub(crate) const DEFAULT_LOCAL_ACK_TIMEOUT: u8 = 50;
 
 pub(crate) const POST_RECV_TCP_LOOP_BACK_SERVER_ADDRESS: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
