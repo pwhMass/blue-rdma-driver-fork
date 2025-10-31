@@ -31,7 +31,7 @@ impl TestDevice {
         device.reset().unwrap();
         let adaptor = device.new_adaptor().unwrap();
         let mut allocator = device.new_dma_buf_allocator().unwrap();
-        let mut rb_allocator = DescRingBufAllocator::new(allocator);
+        let mut rb_allocator = DescRingBufAllocator::new(&mut allocator);
         let cmd_controller =
             CommandConfigurator::init(&adaptor, rb_allocator.alloc()?, rb_allocator.alloc()?)
                 .unwrap();
@@ -61,7 +61,7 @@ impl TestDevice {
         // device.init_dma_engine().unwrap();
         let adaptor = device.new_adaptor().unwrap();
         let mut allocator = device.new_dma_buf_allocator().unwrap();
-        let mut rb_allocator = DescRingBufAllocator::new(allocator);
+        let mut rb_allocator = DescRingBufAllocator::new(&mut allocator);
         let cmd_controller =
             CommandConfigurator::init(&adaptor, rb_allocator.alloc()?, rb_allocator.alloc()?)
                 .unwrap();

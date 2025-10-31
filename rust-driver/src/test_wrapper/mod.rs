@@ -33,7 +33,7 @@ pub fn test_full_rb() -> io::Result<()> {
     let device = EmulatedHwDevice::new("127.0.0.1:7701".into());
     let adaptor = device.new_adaptor().unwrap();
     let mut allocator = device.new_dma_buf_allocator().unwrap();
-    let mut rb_allocator = DescRingBufAllocator::new(allocator);
+    let mut rb_allocator = DescRingBufAllocator::new(&mut allocator);
     let cmd_controller =
         CommandConfigurator::init(&adaptor, rb_allocator.alloc()?, rb_allocator.alloc()?)
             .unwrap();

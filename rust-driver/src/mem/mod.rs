@@ -110,11 +110,6 @@ pub(crate) trait DmaBufAllocator {
     fn alloc(&mut self, len: usize) -> io::Result<DmaBuf>;
 }
 
-impl<A: DmaBufAllocator> DmaBufAllocator for &mut A {
-    fn alloc(&mut self, len: usize) -> io::Result<DmaBuf> {
-        (**self).alloc(len)
-    }
-}
 
 pub(crate) trait MemoryPinner {
     /// Pins pages in memory to prevent swapping

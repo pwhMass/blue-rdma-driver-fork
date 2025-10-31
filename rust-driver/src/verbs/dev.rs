@@ -7,7 +7,7 @@ use pci_info::PciInfo;
 
 use crate::{
     constants::{DEVICE_ID, PCI_SYSFS_BUS_PATH, VENDER_ID},
-    csr::{emulated::EmulatedDevice, hardware::SysfsPciCsrAdaptor},
+    csr::{emulated::EmulatedDevice, hardware::SysfsPciCsrAdaptor, DeviceAdaptor},
     error::Result,
     mem::{
         page::EmulatedPageAllocator, sim_alloc, u_dma_buf::UDmaBufAllocator, EmulatedUmemHandler,
@@ -18,9 +18,9 @@ use crate::{
 use super::mock::{MockDeviceAdaptor, MockDmaBufAllocator, MockUmemHandler};
 
 pub(crate) trait HwDevice {
-    type Adaptor;
-    type DmaBufAllocator;
-    type UmemHandler;
+    type Adaptor: DeviceAdaptor;
+    type DmaBufAllocator: crate::mem::DmaBufAllocator;
+    type UmemHandler: crate::mem::UmemHandler;
 
     fn new_adaptor(&self) -> Result<Self::Adaptor>;
     fn new_dma_buf_allocator(&self) -> Result<Self::DmaBufAllocator>;

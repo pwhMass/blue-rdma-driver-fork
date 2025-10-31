@@ -78,12 +78,12 @@ impl DescRingBuffer {
     }
 }
 
-pub(crate) struct DescRingBufAllocator<A> {
-    dma_buf_allocator: A,
+pub(crate) struct DescRingBufAllocator<'a,  A> {
+    dma_buf_allocator: &'a mut A,
 }
 
-impl<A: DmaBufAllocator> DescRingBufAllocator<A> {
-    pub(crate) fn new(dma_buf_allocator: A) -> Self {
+impl<'a, A: DmaBufAllocator> DescRingBufAllocator<'a, A> {
+    pub(crate) fn new(dma_buf_allocator: &'a mut A) -> Self {
         Self { dma_buf_allocator }
     }
 
