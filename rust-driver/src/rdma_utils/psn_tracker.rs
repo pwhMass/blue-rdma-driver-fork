@@ -168,6 +168,7 @@ impl PsnTracker {
         self.base_psn
     }
 
+    // 是不是不应该硬编码
     fn rstart(&self, psn: Psn) -> i32 {
         let x = psn.into_inner().wrapping_sub(self.base_psn.into_inner());
         if ((x >> 23) & 1) != 0 {
