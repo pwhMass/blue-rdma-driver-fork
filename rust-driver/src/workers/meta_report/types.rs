@@ -4,45 +4,40 @@ use log::{error, debug};
 
 use crate::{
     constants::PSN_MASK,
-    csr::{proxy::MetaReportQueueProxy, CsrReaderAdaptor},
-    rdma_utils::psn::Psn,
-    ringbuf::DescRingBuffer,
-};
-
-use crate::{
-    csr::{mode::Mode, proxy::build_meta_report_queue_proxies, CsrBaseAddrAdaptor, DeviceAdaptor},
+    csr::{DeviceAdaptor, MetaReportRing, ReaderOps},
     descriptors::{
         MetaReportQueueAckDesc, MetaReportQueueAckExtraDesc, MetaReportQueueDescFirst,
         MetaReportQueueDescNext, MetaReportQueuePacketBasicInfoDesc,
         MetaReportQueueReadReqExtendInfoDesc,
     },
-    mem::DmaBuf,
+    rdma_utils::psn::Psn,
+    ringbuf::DescRingBuffer,
     workers::{
         ack_responder::AckResponse, completion::CompletionTask, qp_timeout::AckTimeoutTask,
         rdma::RdmaWriteTask, retransmit::PacketRetransmitTask,
     },
 };
 
-pub(crate) struct MetaReportQueueCtx<Dev> {
+pub(crate) struct MetaReportQueueCtx<Dev: DeviceAdaptor> {
     queue: MetaReportQueue,
-    proxy: MetaReportQueueProxy<Dev>,
+    ring: MetaReportRing<Dev>,
 }
 
-impl<Dev> MetaReportQueueCtx<Dev> {
-    pub(crate) fn new(queue: MetaReportQueue, proxy: MetaReportQueueProxy<Dev>) -> Self {
-        Self { queue, proxy }
+impl<Dev: DeviceAdaptor> MetaReportQueueCtx<Dev> {
+    pub(crate) fn new(queue: MetaReportQueue, ring: MetaReportRing<Dev>) -> Self {
+        Self { queue, ring }
     }
 }
 
 /// Handler for meta report queues
-pub(crate) struct MetaReportQueueHandler<Dev> {
+pub(crate) struct MetaReportQueueHandler<Dev: DeviceAdaptor> {
     /// All four meta report queues
     inner: Vec<MetaReportQueueCtx<Dev>>,
     /// Current position, used for round robin polling
     pos: usize,
 }
 
-impl<Dev> MetaReportQueueHandler<Dev> {
+impl<Dev: DeviceAdaptor> MetaReportQueueHandler<Dev> {
     pub(crate) fn new(inner: Vec<MetaReportQueueCtx<Dev>>) -> Self {
         Self { inner, pos: 0 }
     }
@@ -64,8 +59,8 @@ impl<Dev: DeviceAdaptor> MetaReportQueueHandler<Dev> {
             let Some(desc) = ctx.queue.pop() else {
                 continue;
             };
-            let _ignore = ctx.proxy.write_tail(ctx.queue.tail());
-            if let Ok(head_ptr) = ctx.proxy.read_head() {
+            let _ignore = ctx.ring.write_tail(ctx.queue.tail());
+            if let Ok(head_ptr) = ctx.ring.read_head() {
                 ctx.queue.set_head(head_ptr);
             }
 

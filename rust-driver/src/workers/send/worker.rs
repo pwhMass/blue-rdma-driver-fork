@@ -5,7 +5,7 @@ use log::error;
 
 use crate::{
     descriptors::{SendQueueReqDescSeg0, SendQueueReqDescSeg1},
-    csr::{proxy::SendQueueProxy, CsrWriterAdaptor, DeviceAdaptor},
+    csr::{DeviceAdaptor, SendRing, WriterOps},
     workers::spawner::{SingleThreadPollingWorker, SingleThreadTaskWorker},
 };
 
@@ -29,18 +29,18 @@ impl SendHandle {
     }
 }
 
-pub(crate) struct SendQueueSync<Dev> {
+pub(crate) struct SendQueueSync<Dev: DeviceAdaptor> {
     /// Queue for submitting send requests to the NIC
     send_queue: SendQueue,
-    /// Csr proxy
-    csr_adaptor: SendQueueProxy<Dev>,
+    /// CSR ring for accessing hardware registers
+    csr_ring: SendRing<Dev>,
 }
 
 impl<Dev: DeviceAdaptor> SendQueueSync<Dev> {
-    pub(crate) fn new(send_queue: SendQueue, csr_adaptor: SendQueueProxy<Dev>) -> Self {
+    pub(crate) fn new(send_queue: SendQueue, csr_ring: SendRing<Dev>) -> Self {
         Self {
             send_queue,
-            csr_adaptor,
+            csr_ring,
         }
     }
 
@@ -58,14 +58,14 @@ impl<Dev: DeviceAdaptor> SendQueueSync<Dev> {
     }
 
     fn sync_head(&self) {
-        self.csr_adaptor
+        self.csr_ring
             .write_head(self.send_queue.head())
             .expect("failed to write head csr");
     }
 
     fn sync_tail(&mut self) {
         let tail_ptr = self
-            .csr_adaptor
+            .csr_ring
             .read_tail()
             .expect("failed to read tail csr");
         self.send_queue.set_tail(tail_ptr);
@@ -73,7 +73,7 @@ impl<Dev: DeviceAdaptor> SendQueueSync<Dev> {
 }
 
 /// Worker thread for processing send work requests
-pub(crate) struct SendWorker<Dev> {
+pub(crate) struct SendWorker<Dev: DeviceAdaptor> {
     /// id of the worker
     id: usize,
     /// Local work request queue for this worker
@@ -85,7 +85,7 @@ pub(crate) struct SendWorker<Dev> {
     sq: SendQueueSync<Dev>,
 }
 
-impl<Dev> SendWorker<Dev> {
+impl<Dev: DeviceAdaptor> SendWorker<Dev> {
     pub(crate) fn new(
         id: usize,
         local: WrWorker,

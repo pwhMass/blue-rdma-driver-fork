@@ -4,7 +4,7 @@ use types::{WrInjector, WrWorker};
 use worker::{SendQueueSync, SendWorker};
 
 use crate::{
-    csr::{mode::Mode, proxy::build_send_queue_proxies, CsrBaseAddrAdaptor, DeviceAdaptor},
+    csr::{build_send_rings, mode::Mode, DeviceAdaptor},
     mem::DmaBuf,
     ringbuf::DescRingBuffer,
     workers::spawner::{AbortSignal, SingleThreadPollingWorker},
@@ -27,9 +27,9 @@ where
 {
     let injector = Arc::new(WrInjector::new());
     let handle = SendHandle::new(Arc::clone(&injector));
-    let mut sq_proxies = build_send_queue_proxies(dev.clone(), mode);
-    for (proxy, buf) in sq_proxies.iter_mut().zip(bufs.iter()) {
-        proxy.write_base_addr(buf.phys_addr)?;
+    let sq_rings = build_send_rings(dev.clone(), mode);
+    for (ring, buf) in sq_rings.iter().zip(bufs.iter()) {
+        ring.write_base_addr(buf.phys_addr)?;
     }
     let send_queues: Vec<_> = bufs
         .into_iter()
@@ -41,8 +41,8 @@ where
     let stealers: Vec<_> = workers.iter().map(WrWorker::stealer).collect();
     let sqs = send_queues
         .into_iter()
-        .zip(sq_proxies)
-        .map(|(sq, proxy)| SendQueueSync::new(sq, proxy));
+        .zip(sq_rings)
+        .map(|(sq, ring)| SendQueueSync::new(sq, ring));
     for (id, (local, sq)) in workers.into_iter().zip(sqs).enumerate() {
         let worker = SendWorker::new(
             id,

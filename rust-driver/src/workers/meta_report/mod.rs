@@ -10,13 +10,13 @@ use types::{MetaReportQueue, MetaReportQueueCtx, MetaReportQueueHandler};
 use worker::{MetaHandler, MetaWorker};
 
 use crate::{
-    csr::{mode::Mode, proxy::build_meta_report_queue_proxies, CsrBaseAddrAdaptor, DeviceAdaptor},
+    csr::{build_meta_report_rings, mode::Mode, DeviceAdaptor},
     mem::DmaBuf,
     ringbuf::DescRingBuffer,
     workers::{
         ack_responder::AckResponse,
-        qp_timeout::AckTimeoutTask,
         completion::CompletionTask,
+        qp_timeout::AckTimeoutTask,
         rdma::RdmaWriteTask,
         retransmit::PacketRetransmitTask,
         spawner::{AbortSignal, SingleThreadPollingWorker, TaskTx},
@@ -40,15 +40,15 @@ pub(crate) fn spawn<Dev>(
 where
     Dev: Clone + DeviceAdaptor + Send + 'static,
 {
-    let mut mrq_proxies = build_meta_report_queue_proxies(dev.clone(), mode);
-    for (proxy, page) in mrq_proxies.iter_mut().zip(pages.iter()) {
-        proxy.write_base_addr(page.phys_addr)?;
+    let mrq_rings = build_meta_report_rings(dev.clone(), mode);
+    for (ring, page) in mrq_rings.iter().zip(pages.iter()) {
+        ring.write_base_addr(page.phys_addr)?;
     }
     let ctxs: Vec<_> = pages
         .into_iter()
         .map(|p| MetaReportQueue::new(DescRingBuffer::new(p.buf)))
-        .zip(mrq_proxies)
-        .map(|(q, p)| MetaReportQueueCtx::new(q, p))
+        .zip(mrq_rings)
+        .map(|(q, ring)| MetaReportQueueCtx::new(q, ring))
         .collect();
 
     let handler = MetaHandler::new(

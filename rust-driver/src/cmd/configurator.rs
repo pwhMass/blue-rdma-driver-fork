@@ -11,10 +11,7 @@ use parking_lot::Mutex;
 
 use crate::{
     constants::CARD_MAC_ADDRESS,
-    csr::{
-        proxy::{CmdQueueCsrProxy, CmdRespQueueCsrProxy},
-        CsrBaseAddrAdaptor, CsrReaderAdaptor, CsrWriterAdaptor, DeviceAdaptor,
-    },
+    csr::{cmd_req_ring, cmd_resp_ring, CmdReqRing, CmdRespRing, DeviceAdaptor, ReaderOps, WriterOps},
     descriptors::{
         cmd::{CmdQueueReqDescUpdateMrTable, CmdQueueReqDescUpdatePGT},
         CmdQueueReqDescQpManagement, CmdQueueReqDescSetNetworkParam,
@@ -31,13 +28,13 @@ use super::{
 };
 
 /// Controller of the command queue
-pub(crate) struct CommandConfigurator<Dev> {
+pub(crate) struct CommandConfigurator<Dev: DeviceAdaptor> {
     /// Command queue pair
     cmd_qp: Mutex<CmdQp>,
-    /// Proxy for accessing command queue CSRs
-    req_csr_proxy: CmdQueueCsrProxy<Dev>,
-    /// Proxy for accessing command response queue CSRs
-    resp_csr_proxy: CmdRespQueueCsrProxy<Dev>,
+    /// Ring for accessing command queue CSRs
+    req_csr_ring: CmdReqRing<Dev>,
+    /// Ring for accessing command response queue CSRs
+    resp_csr_ring: CmdRespRing<Dev>,
 }
 
 impl<Dev: DeviceAdaptor> CommandConfigurator<Dev> {
@@ -47,30 +44,30 @@ impl<Dev: DeviceAdaptor> CommandConfigurator<Dev> {
     /// # Returns
     /// A new `CommandConfigurator` with an initialized command queue
     pub(crate) fn init(dev: &Dev, req_buf: DmaBuf, resp_buf: DmaBuf) -> io::Result<Self> {
-        let mut req_queue = CmdQueue::new(DescRingBuffer::new(req_buf.buf));
-        let mut resp_queue = CmdRespQueue::new(DescRingBuffer::new(resp_buf.buf));
-        let req_csr_proxy = CmdQueueCsrProxy(dev.clone());
-        let resp_csr_proxy = CmdRespQueueCsrProxy(dev.clone());
+        let req_queue = CmdQueue::new(DescRingBuffer::new(req_buf.buf));
+        let resp_queue = CmdRespQueue::new(DescRingBuffer::new(resp_buf.buf));
+        let req_csr_ring = cmd_req_ring(dev.clone());
+        let resp_csr_ring = cmd_resp_ring(dev.clone());
         debug!("cmd req queue pa = 0x{:x}", req_buf.phys_addr);
-        req_csr_proxy.write_base_addr(req_buf.phys_addr)?;
+        req_csr_ring.write_base_addr(req_buf.phys_addr)?;
         debug!("cmd resp queue pa = 0x{:x}", resp_buf.phys_addr);
-        resp_csr_proxy.write_base_addr(resp_buf.phys_addr)?;
+        resp_csr_ring.write_base_addr(resp_buf.phys_addr)?;
 
         Ok(Self {
             cmd_qp: Mutex::new(CmdQp::new(req_queue, resp_queue)),
-            req_csr_proxy,
-            resp_csr_proxy,
+            req_csr_ring,
+            resp_csr_ring,
         })
     }
 
     /// Flush cmd request queue pointer to device
     pub(crate) fn flush_req_queue(&self, req_queue: &CmdQueue) -> io::Result<()> {
-        self.req_csr_proxy.write_head(req_queue.head())
+        self.req_csr_ring.write_head(req_queue.head())
     }
 
     /// Flush cmd response queue pointer to device
     pub(crate) fn flush_resp_queue(&self, resp_queue: &CmdRespQueue) -> io::Result<()> {
-        self.resp_csr_proxy.write_tail(resp_queue.tail())
+        self.resp_csr_ring.write_tail(resp_queue.tail())
     }
 }
 
@@ -88,8 +85,8 @@ impl<Dev: DeviceAdaptor> CommandConfigurator<Dev> {
         let mut qp = self.cmd_qp.lock();
         let mut qp_update = qp.update();
         qp_update.push(CmdQueueDesc::UpdateMrTable(update_mr_table));
-        qp_update.flush(&self.req_csr_proxy);
-        qp_update.wait(&self.resp_csr_proxy);
+        qp_update.flush(&self.req_csr_ring);
+        qp_update.wait(&self.resp_csr_ring);
     }
 
     pub(crate) fn update_pgt(&self, update: PgtUpdate) {
@@ -102,8 +99,8 @@ impl<Dev: DeviceAdaptor> CommandConfigurator<Dev> {
         let mut qp = self.cmd_qp.lock();
         let mut qp_update = qp.update();
         qp_update.push(CmdQueueDesc::UpdatePGT(desc));
-        qp_update.flush(&self.req_csr_proxy);
-        qp_update.wait(&self.resp_csr_proxy);
+        qp_update.flush(&self.req_csr_ring);
+        qp_update.wait(&self.resp_csr_ring);
     }
 
     pub(crate) fn update_qp(&self, entry: UpdateQp) {
@@ -124,12 +121,11 @@ impl<Dev: DeviceAdaptor> CommandConfigurator<Dev> {
         let mut qp = self.cmd_qp.lock();
         let mut update = qp.update();
         update.push(CmdQueueDesc::ManageQP(desc));
-        update.flush(&self.req_csr_proxy);
-        update.wait(&self.resp_csr_proxy);
+        update.flush(&self.req_csr_ring);
+        update.wait(&self.resp_csr_ring);
     }
 
     pub(crate) fn set_network(&self, param: NetworkConfig) {
-        let network = param.ip;
         let desc = CmdQueueReqDescSetNetworkParam::new(
             0,
             param.gateway.map_or(0, Ipv4Addr::to_bits),
@@ -140,8 +136,8 @@ impl<Dev: DeviceAdaptor> CommandConfigurator<Dev> {
         let mut qp = self.cmd_qp.lock();
         let mut update = qp.update();
         update.push(CmdQueueDesc::SetNetworkParam(desc));
-        update.flush(&self.req_csr_proxy);
-        update.wait(&self.resp_csr_proxy);
+        update.flush(&self.req_csr_ring);
+        update.wait(&self.resp_csr_ring);
     }
 
     pub(crate) fn set_raw_packet_recv_buffer(&self, meta: RecvBufferMeta) {
@@ -149,8 +145,8 @@ impl<Dev: DeviceAdaptor> CommandConfigurator<Dev> {
         let mut qp = self.cmd_qp.lock();
         let mut update = qp.update();
         update.push(CmdQueueDesc::SetRawPacketReceiveMeta(desc));
-        update.flush(&self.req_csr_proxy);
-        update.wait(&self.resp_csr_proxy);
+        update.flush(&self.req_csr_ring);
+        update.wait(&self.resp_csr_ring);
     }
 }
 
@@ -199,21 +195,21 @@ impl QpUpdate<'_> {
         let _ignore = self.req_queue.push(desc);
     }
 
-    /// Flushes the command queue by writing the head pointer to the CSR proxy.
-    fn flush<Dev: DeviceAdaptor>(&mut self, req_csr_proxy: &CmdQueueCsrProxy<Dev>) {
-        req_csr_proxy.write_head(self.req_queue.head());
-        if let Ok(tail_ptr) = req_csr_proxy.read_tail() {
+    /// Flushes the command queue by writing the head pointer to the CSR ring.
+    fn flush<Dev: DeviceAdaptor>(&mut self, req_csr_ring: &CmdReqRing<Dev>) {
+        let _ = req_csr_ring.write_head(self.req_queue.head());
+        if let Ok(tail_ptr) = req_csr_ring.read_tail() {
             self.req_queue.set_tail(tail_ptr);
         }
     }
 
     /// Waits for responses to all pushed commands.
-    fn wait<Dev: DeviceAdaptor>(mut self, resp_csr_proxy: &CmdRespQueueCsrProxy<Dev>) {
+    fn wait<Dev: DeviceAdaptor>(mut self, resp_csr_ring: &CmdRespRing<Dev>) {
         while self.num != 0 {
-            if let Some(resp) = self.resp_queue.try_pop() {
+            if let Some(_resp) = self.resp_queue.try_pop() {
                 self.num = self.num.wrapping_sub(1);
-                resp_csr_proxy.write_tail(self.resp_queue.tail());
-                if let Ok(head_ptr) = resp_csr_proxy.read_head() {
+                let _ = resp_csr_ring.write_tail(self.resp_queue.tail());
+                if let Ok(head_ptr) = resp_csr_ring.read_head() {
                     self.resp_queue.set_head(head_ptr);
                 }
             }

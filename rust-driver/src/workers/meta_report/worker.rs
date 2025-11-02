@@ -36,13 +36,13 @@ use super::types::{
 };
 
 /// A worker for processing packet meta
-pub(crate) struct MetaWorker<Dev> {
+pub(crate) struct MetaWorker<Dev: DeviceAdaptor> {
     /// Inner meta report queue
     inner: MetaReportQueueHandler<Dev>,
     handler: MetaHandler,
 }
 
-impl<Dev> MetaWorker<Dev> {
+impl<Dev: DeviceAdaptor> MetaWorker<Dev> {
     pub(crate) fn new(inner: MetaReportQueueHandler<Dev>, handler: MetaHandler) -> Self {
         Self { inner, handler }
     }
@@ -56,6 +56,7 @@ impl<Dev: DeviceAdaptor + Send + 'static> SingleThreadPollingWorker for MetaWork
     }
 
     fn process(&mut self, meta: Self::Task) {
+        debug!("Kevin MetaWorker process meta: {meta:?}");
         if self.handler.handle_meta(meta).is_none() {
             error!("invalid meta: {meta:?}");
         }
@@ -185,7 +186,10 @@ impl MetaHandler {
     }
 
     pub(crate) fn sender_updates(&self, qpn: u32, base_psn: Psn) {
-        debug!("MetaHandler sender_updates qpn={:?}, base_psn={:?}", qpn, base_psn);
+        debug!(
+            "MetaHandler sender_updates qpn={:?}, base_psn={:?}",
+            qpn, base_psn
+        );
         self.completion_tx
             .send(CompletionTask::AckSend { qpn, base_psn });
         self.packet_retransmit_tx
@@ -195,9 +199,13 @@ impl MetaHandler {
     }
 
     pub(crate) fn receiver_updates(&self, qpn: u32, base_psn: Psn) {
-        debug!("MetaHandler receiver_updates qpn={:?}, base_psn={:?}", qpn, base_psn);
+        debug!(
+            "MetaHandler receiver_updates qpn={:?}, base_psn={:?}",
+            qpn, base_psn
+        );
         self.completion_tx
             .send(CompletionTask::AckRecv { qpn, base_psn });
+        // 这对吗？为什么recv也要负责tx重传？
         self.packet_retransmit_tx
             .send(PacketRetransmitTask::Ack { qpn, psn: base_psn });
     }

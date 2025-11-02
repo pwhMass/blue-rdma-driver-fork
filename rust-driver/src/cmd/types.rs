@@ -6,10 +6,6 @@ use crate::{
         CmdQueueReqDescSetRawPacketReceiveMeta, CmdQueueReqDescUpdateMrTable,
         CmdQueueReqDescUpdatePGT, CmdQueueRespDescOnlyCommonHeader,
     },
-    csr::{
-        proxy::{CmdQueueCsrProxy, CmdRespQueueCsrProxy},
-        CsrReaderAdaptor, CsrWriterAdaptor, DeviceAdaptor,
-    },
     mem::page::ContiguousPages,
     net::config::NetworkConfig,
     ringbuf::{DescDeserialize, DescRingBuffer},

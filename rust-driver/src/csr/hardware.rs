@@ -1,3 +1,48 @@
+//! Hardware CSR Access Implementations
+//!
+//! This module provides direct hardware register access implementations for PCIe devices.
+//! It supports two access methods:
+//!
+//! # Access Methods
+//!
+//! ## VFIO-based Access (`VfioPciCsrAdaptor`)
+//! - Uses the Linux VFIO (Virtual Function I/O) framework
+//! - Provides userspace driver capability with device isolation
+//! - Enables DMA mapping and interrupt handling
+//! - Preferred for production deployments requiring IOMMU protection
+//!
+//! ## Sysfs-based Access (`SysfsPciCsrAdaptor`)
+//! - Direct MMIO access via `/sys/bus/pci/devices/<bdf>/resource0`
+//! - Simpler setup without VFIO kernel modules
+//! - Useful for development and debugging
+//! - Requires root privileges
+//!
+//! # Memory Management
+//!
+//! Both adaptors integrate with the memory subsystem to provide:
+//! - DMA buffer allocation via DMA-BUF or udmabuf
+//! - Physical address resolution for user memory
+//! - Page-aligned memory registration
+//!
+//! # Register Access
+//!
+//! All CSR access is performed through BAR0 (Base Address Register 0) of the PCIe device:
+//! - 32-bit read/write operations at aligned addresses
+//! - Memory-mapped I/O (MMIO) with proper synchronization
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use crate::csr::hardware::VfioPciCsrAdaptor;
+//!
+//! // Open device via VFIO
+//! let adaptor = VfioPciCsrAdaptor::new("uverbs0")?;
+//!
+//! // Read/write CSRs
+//! let mode = adaptor.read_csr(0x1000)?;
+//! adaptor.write_csr(0x2000, 0x42)?;
+//! ```
+
 use log::debug;
 use memmap2::{MmapMut, MmapOptions};
 use parking_lot::Mutex;

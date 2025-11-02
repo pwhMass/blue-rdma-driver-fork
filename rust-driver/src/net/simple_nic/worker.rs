@@ -10,11 +10,11 @@ use std::{
 use log::error;
 
 use crate::{
-    descriptors::simple_nic::{SimpleNicRxQueueDesc, SimpleNicTxQueueDesc},
     csr::{
-        proxy::{SimpleNicRxQueueCsrProxy, SimpleNicTxQueueCsrProxy},
-        CsrBaseAddrAdaptor, CsrWriterAdaptor, DeviceAdaptor,
+        simple_nic_rx_ring, simple_nic_tx_ring, DeviceAdaptor, ReaderOps, SimpleNicRxRing,
+        SimpleNicTxRing, WriterOps,
     },
+    descriptors::simple_nic::{SimpleNicRxQueueDesc, SimpleNicTxQueueDesc},
     mem::{
         page::{ContiguousPages, MmapMut},
         DmaBuf, PageWithPhysAddr,
@@ -27,7 +27,7 @@ use super::{
     FrameRx, FrameTx, SimpleNicDevice,
 };
 
-pub(crate) struct SimpleNicController<Dev> {
+pub(crate) struct SimpleNicController<Dev: DeviceAdaptor> {
     tx: FrameTxQueue<Dev>,
     rx: FrameRxQueue<Dev>,
 }
@@ -40,21 +40,21 @@ impl<Dev: DeviceAdaptor> SimpleNicController<Dev> {
         tx_buffer: DmaBuf,
         rx_buffer: DmaBuf,
     ) -> io::Result<Self> {
-        let mut tx_queue = SimpleNicTxQueue::new(DescRingBuffer::new(tx_rb_buf.buf));
-        let mut rx_queue = SimpleNicRxQueue::new(DescRingBuffer::new(rx_rb_buf.buf));
-        let req_csr_proxy = SimpleNicTxQueueCsrProxy(dev.clone());
-        let resp_csr_proxy = SimpleNicRxQueueCsrProxy(dev.clone());
-        req_csr_proxy.write_base_addr(tx_rb_buf.phys_addr)?;
-        resp_csr_proxy.write_base_addr(rx_rb_buf.phys_addr)?;
+        let tx_queue = SimpleNicTxQueue::new(DescRingBuffer::new(tx_rb_buf.buf));
+        let rx_queue = SimpleNicRxQueue::new(DescRingBuffer::new(rx_rb_buf.buf));
+        let req_csr_ring = simple_nic_tx_ring(dev.clone());
+        let resp_csr_ring = simple_nic_rx_ring(dev.clone());
+        req_csr_ring.write_base_addr(tx_rb_buf.phys_addr)?;
+        resp_csr_ring.write_base_addr(rx_rb_buf.phys_addr)?;
 
         Ok(Self {
-            tx: FrameTxQueue::new(tx_queue, tx_buffer.buf, tx_buffer.phys_addr, req_csr_proxy),
-            rx: FrameRxQueue::new(rx_queue, rx_buffer.buf, resp_csr_proxy),
+            tx: FrameTxQueue::new(tx_queue, tx_buffer.buf, tx_buffer.phys_addr, req_csr_ring),
+            rx: FrameRxQueue::new(rx_queue, rx_buffer.buf, resp_csr_ring),
         })
     }
 }
 
-impl<Dev> SimpleNicController<Dev> {
+impl<Dev: DeviceAdaptor> SimpleNicController<Dev> {
     pub(crate) fn into_split(self) -> (FrameTxQueue<Dev>, FrameRxQueue<Dev>) {
         (self.tx, self.rx)
     }
@@ -69,11 +69,11 @@ impl<Dev> SimpleNicController<Dev> {
 const FRAME_SLOT_SIZE: usize = 128;
 
 /// Send frame through `SimpleNicTxQueue`
-pub(crate) struct FrameTxQueue<Dev> {
+pub(crate) struct FrameTxQueue<Dev: DeviceAdaptor> {
     /// Inner
     inner: SimpleNicTxQueue,
-    /// CSR Proxy
-    csr_proxy: SimpleNicTxQueueCsrProxy<Dev>,
+    /// CSR Ring
+    csr_ring: SimpleNicTxRing<Dev>,
     /// A contiguous memory buffer used for sending data
     buf: MmapMut,
     /// Base physical address of the buffer
@@ -82,17 +82,17 @@ pub(crate) struct FrameTxQueue<Dev> {
     buf_head: usize,
 }
 
-impl<Dev> FrameTxQueue<Dev> {
+impl<Dev: DeviceAdaptor> FrameTxQueue<Dev> {
     /// Creates a new `FrameTxQueue`
     pub(crate) fn new(
         inner: SimpleNicTxQueue,
         buf: MmapMut,
         buf_base_phys_addr: u64,
-        csr_proxy: SimpleNicTxQueueCsrProxy<Dev>,
+        csr_ring: SimpleNicTxRing<Dev>,
     ) -> Self {
         Self {
             inner,
-            csr_proxy,
+            csr_ring,
             buf,
             buf_base_phys_addr,
             buf_head: 0,
@@ -130,8 +130,8 @@ impl<Dev: DeviceAdaptor + Send + 'static> FrameTx for FrameTxQueue<Dev> {
         while !self.inner.push(desc) {
             std::hint::spin_loop();
         }
-        self.csr_proxy.write_head(self.inner.head());
-        if let Ok(tail_ptr) = self.csr_proxy.read_tail() {
+        let _ = self.csr_ring.write_head(self.inner.head());
+        if let Ok(tail_ptr) = self.csr_ring.read_tail() {
             self.inner.set_tail(tail_ptr);
         }
 
@@ -140,31 +140,31 @@ impl<Dev: DeviceAdaptor + Send + 'static> FrameTx for FrameTxQueue<Dev> {
 }
 
 /// Receive frame from `SimpleNicRxQueue`
-pub(crate) struct FrameRxQueue<Dev> {
+pub(crate) struct FrameRxQueue<Dev: DeviceAdaptor> {
     /// Queue for receiving frames from the NIC
     rx_queue: SimpleNicRxQueue,
     /// Buffer for storing received frames
     rx_buf: MmapMut,
-    /// CSR Proxy
-    csr_proxy: SimpleNicRxQueueCsrProxy<Dev>,
+    /// CSR Ring
+    csr_ring: SimpleNicRxRing<Dev>,
 }
 
-impl<Dev> FrameRxQueue<Dev> {
+impl<Dev: DeviceAdaptor> FrameRxQueue<Dev> {
     /// Creates a new `FrameRxQueue`
     pub(crate) fn new(
         rx_queue: SimpleNicRxQueue,
         rx_buf: MmapMut,
-        csr_proxy: SimpleNicRxQueueCsrProxy<Dev>,
+        csr_ring: SimpleNicRxRing<Dev>,
     ) -> Self {
         Self {
             rx_queue,
             rx_buf,
-            csr_proxy,
+            csr_ring,
         }
     }
 }
 
-impl<Dev: Send + 'static> FrameRx for FrameRxQueue<Dev> {
+impl<Dev: DeviceAdaptor + Send + 'static> FrameRx for FrameRxQueue<Dev> {
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::as_conversions)] // converting u32 to usize
     fn recv_nonblocking(&mut self) -> io::Result<Vec<u8>> {
