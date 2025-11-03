@@ -72,13 +72,13 @@ void setup_ib(struct rdma_context *ctx, bool is_client)
 
   printf("[DEBUG] setup_ib: Allocating buffer (size=%lu bytes)...\n", BUF_SIZE);
   ctx->buffer = mmap(NULL, BUF_SIZE, PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
+                     MAP_SHARED | MAP_ANONYMOUS | MAP_HUGETLB | MAP_POPULATE, -1, 0);
   if (ctx->buffer == MAP_FAILED)
   {
     printf("[DEBUG] setup_ib: mmap with MAP_HUGETLB failed, retrying without it\n");
     // Retry without MAP_HUGETLB for simulator compatibility
     ctx->buffer = mmap(NULL, BUF_SIZE, PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                       MAP_SHARED | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
     if (ctx->buffer == MAP_FAILED)
       die("Failed to mmap buffer");
   }

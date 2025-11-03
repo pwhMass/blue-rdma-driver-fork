@@ -180,6 +180,7 @@ impl VerbsOps for MockDeviceCtx {
         Ok(self.mr_key)
     }
 
+    //TODO mock实现不完整
     fn dereg_mr(&mut self, mr_key: u32) -> crate::error::Result<()> {
         info!("mock dereg mr");
         Ok(())
@@ -349,10 +350,19 @@ impl VerbsOps for MockDeviceCtx {
             if dqpn.is_some() {
                 ctx.dpqn = dqpn;
             }
-            ctx.dpq_ip = Some(dqp_ip);
+            if dqp_ip != Ipv4Addr::new(0, 0, 0, 0) {
+                ctx.dpq_ip = Some(dqp_ip);
+            }
             if let Some((dqpn, dqp_ip)) = ctx.dpqn.zip(ctx.dpq_ip) {
                 info!("connect to dqpn: {dqpn}, ip: {dqp_ip}");
                 ctx.conn().connect(dqpn, dqp_ip);
+            } else if let Some(dqpn) = ctx.dpqn {
+                let fallback_ip = Ipv4Addr::LOCALHOST;
+                info!(
+                    "dest ip not provided for qp {qpn}, defaulting to loopback {fallback_ip}"
+                );
+                ctx.dpq_ip = Some(fallback_ip);
+                ctx.conn().connect(dqpn, fallback_ip);
             }
         });
 
