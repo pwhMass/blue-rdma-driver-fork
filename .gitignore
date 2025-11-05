@@ -12,3 +12,9 @@ build/
 *.cmd
 Module.symvers
 modules.order
+*.log
+
+# Examples executables
+examples/loopback
+examples/send_recv
+examples/rdma_client_server
