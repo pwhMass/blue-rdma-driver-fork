@@ -1,9 +1,13 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
+use parking_lot::RwLock;
 use pci_info::PciInfo;
+
+use crate::memory_proxy_simple::{SimpleMemoryProxyClient, SimpleTcpClient};
 
 use crate::{
     constants::{DEVICE_ID, PCI_SYSFS_BUS_PATH, VENDER_ID},
@@ -14,6 +18,8 @@ use crate::{
         HostUmemHandler,
     },
 };
+
+use crate::mem::pa_va_map::PaVaMap;
 
 use super::mock::{MockDeviceAdaptor, MockDmaBufAllocator, MockUmemHandler};
 
@@ -107,11 +113,24 @@ impl HwDevice for PciHwDevice {
 
 pub(crate) struct EmulatedHwDevice {
     addr: String,
+    pa_va_map: Arc<RwLock<PaVaMap>>,
 }
 
 impl EmulatedHwDevice {
     pub(crate) fn new(addr: String) -> Self {
-        Self { addr }
+        // 需要启动pcie client
+        let pa_va_map = Arc::new(RwLock::new(PaVaMap::new()));
+        let tcp_server_addr = "127.0.0.1:7003".parse().unwrap();
+        let tcp_client = SimpleTcpClient::new(tcp_server_addr).unwrap();
+        let mut mem_proxy_client = SimpleMemoryProxyClient::new(tcp_client, pa_va_map.clone());
+
+        let _ = mem_proxy_client.start_processing();
+        Self { addr, pa_va_map }
+    }
+
+    /// Get reference to the PA↔VA mapping table (simulation mode only)
+    pub(crate) fn pa_va_map(&self) -> &Arc<RwLock<PaVaMap>> {
+        &self.pa_va_map
     }
 }
 
@@ -133,7 +152,7 @@ impl HwDevice for EmulatedHwDevice {
     }
 
     fn new_umem_handler(&self) -> Self::UmemHandler {
-        EmulatedUmemHandler::new(sim_alloc::shm_start_addr() as u64)
+        EmulatedUmemHandler::new(sim_alloc::shm_start_addr() as u64, self.pa_va_map.clone())
     }
 }
 

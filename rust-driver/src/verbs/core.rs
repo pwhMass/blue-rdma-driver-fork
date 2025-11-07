@@ -2,13 +2,15 @@ use std::ptr::NonNull;
 use std::{io, net::Ipv4Addr, ptr};
 
 use ipnetwork::{IpNetwork, Ipv4Network};
-use log::{error, info, debug};
+use log::{debug, error, info};
 
 use crate::constants::{
     POST_RECV_TCP_LOOP_BACK_CLIENT_ADDRESS, POST_RECV_TCP_LOOP_BACK_SERVER_ADDRESS,
     TEST_CARD_IP_ADDRESS,
 };
 use crate::csr::emulated::EmulatedDevice;
+use crate::memory_proxy_simple::SimpleMemoryProxyClient;
+use crate::memory_proxy_simple::SimpleTcpClient;
 use crate::rdma_utils::types::ibv_qp_attr::{IbvQpAttr, IbvQpInitAttr};
 use crate::rdma_utils::types::{RecvWr, SendWr};
 use crate::RdmaCtxOps;
@@ -61,10 +63,10 @@ impl BlueRdmaCore {
         let config = ConfigLoader::load_default()?;
         debug!("before open default");
         let device = PciHwDevice::open_default()?;
-        
+
         debug!("before reset device");
         device.reset()?;
-        
+
         #[cfg(feature = "debug_csrs")]
         device.set_custom()?;
 
@@ -131,7 +133,7 @@ unsafe impl RdmaCtxOps for BlueRdmaCore {
         let ctx = BlueRdmaCore::new_emulated(&name);
         #[cfg(feature = "mock")]
         let ctx = BlueRdmaCore::new_mock(&name);
-        
+
         match ctx {
             Ok(x) => Box::into_raw(Box::new(x)).cast(),
             Err(err) => {

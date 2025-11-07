@@ -17,6 +17,9 @@ mod utils;
 
 pub(crate) mod sim_alloc;
 
+/// PA ↔ VA bidirectional mapping for simulation mode
+pub(crate) mod pa_va_map;
+
 use page::MmapMut;
 pub(crate) use utils::*;
 use virt_to_phy::{AddressResolver, PhysAddrResolverEmulated, PhysAddrResolverLinuxX86};
@@ -110,7 +113,6 @@ pub(crate) trait DmaBufAllocator {
     fn alloc(&mut self, len: usize) -> io::Result<DmaBuf>;
 }
 
-
 pub(crate) trait MemoryPinner {
     /// Pins pages in memory to prevent swapping
     ///
@@ -180,22 +182,58 @@ impl UmemHandler for HostUmemHandler {}
 
 pub(crate) struct EmulatedUmemHandler {
     resolver: PhysAddrResolverEmulated,
+    pa_va_map: std::sync::Arc<parking_lot::RwLock<pa_va_map::PaVaMap>>,
 }
 
 impl EmulatedUmemHandler {
-    pub(crate) fn new(heap_start_addr: u64) -> Self {
+    pub(crate) fn new(
+        heap_start_addr: u64,
+        pa_va_map: std::sync::Arc<parking_lot::RwLock<pa_va_map::PaVaMap>>,
+    ) -> Self {
         Self {
             resolver: PhysAddrResolverEmulated::new(heap_start_addr),
+            pa_va_map,
         }
     }
 }
 
 impl MemoryPinner for EmulatedUmemHandler {
     fn pin_pages(&self, addr: u64, length: usize) -> io::Result<()> {
+        // TODO
+        // {
+        //     // Convert VA to PA using the emulated resolver
+        //     if let Some(pa) = self.resolver.virt_to_phys(addr)? {
+        //         // Register PA ↔ VA mapping in the device's table
+        //         self.pa_va_map.write().insert(pa, addr, length);
+        //         log::debug!(
+        //             "EmulatedUmemHandler: Registered MR mapping PA {:#x} -> VA {:#x}, length {}",
+        //             pa,
+        //             addr,
+        //             length
+        //         );
+        //     } else {
+        //         log::warn!(
+        //             "EmulatedUmemHandler: Failed to resolve VA {:#x} to PA during pin",
+        //             addr
+        //         );
+        //     }
+        // }
         Ok(())
     }
 
     fn unpin_pages(&self, addr: u64, length: usize) -> io::Result<()> {
+        // TODO
+        // {
+        //     // Convert VA to PA and remove from mapping table
+        //     if let Some(pa) = self.resolver.virt_to_phys(addr)? {
+        //         self.pa_va_map.write().remove(pa);
+        //         log::debug!(
+        //             "EmulatedUmemHandler: Unregistered MR mapping PA {:#x} <- VA {:#x}",
+        //             pa,
+        //             addr
+        //         );
+        //     }
+        // }
         Ok(())
     }
 }

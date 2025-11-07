@@ -175,6 +175,9 @@ mod error;
 /// Memory operation components
 #[allow(unsafe_code)]
 mod mem;
+/// Simplified memory proxy server for simulation mode
+
+mod memory_proxy_simple;
 /// Network implementations
 pub mod net;
 pub(crate) mod rdma_utils;
