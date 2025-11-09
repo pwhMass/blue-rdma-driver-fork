@@ -80,11 +80,11 @@ impl BlueRdmaCore {
         let device = match sysfs_name {
             "uverbs0" => {
                 sim_alloc::init_global_allocator(0, &HEAP_ALLOCATOR);
-                EmulatedHwDevice::new("127.0.0.1:7701".into())
+                EmulatedHwDevice::new("127.0.0.1:7701".into(), "127.0.0.1:7003".into())
             }
             "uverbs1" => {
                 sim_alloc::init_global_allocator(1, &HEAP_ALLOCATOR);
-                EmulatedHwDevice::new("127.0.0.1:7702".into())
+                EmulatedHwDevice::new("127.0.0.1:7702".into(), "127.0.0.1:7004".into())
             }
             _ => unreachable!("unexpected sysfs_name"),
         };

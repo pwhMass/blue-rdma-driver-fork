@@ -117,15 +117,18 @@ pub(crate) struct EmulatedHwDevice {
 }
 
 impl EmulatedHwDevice {
-    pub(crate) fn new(addr: String) -> Self {
+    pub(crate) fn new(csr_addr: String, pcie_addr: String) -> Self {
         // 需要启动pcie client
         let pa_va_map = Arc::new(RwLock::new(PaVaMap::new()));
-        let tcp_server_addr = "127.0.0.1:7003".parse().unwrap();
+        let tcp_server_addr = pcie_addr.parse().unwrap();
         let tcp_client = SimpleTcpClient::new(tcp_server_addr).unwrap();
         let mut mem_proxy_client = SimpleMemoryProxyClient::new(tcp_client, pa_va_map.clone());
 
         let _ = mem_proxy_client.start_processing();
-        Self { addr, pa_va_map }
+        Self {
+            addr: csr_addr,
+            pa_va_map,
+        }
     }
 
     /// Get reference to the PA↔VA mapping table (simulation mode only)

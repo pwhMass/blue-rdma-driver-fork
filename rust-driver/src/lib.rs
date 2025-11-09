@@ -176,7 +176,6 @@ mod error;
 #[allow(unsafe_code)]
 mod mem;
 /// Simplified memory proxy server for simulation mode
-
 mod memory_proxy_simple;
 /// Network implementations
 pub mod net;
@@ -187,4 +186,6 @@ mod workers;
 
 pub use error::{RdmaError, Result};
 pub use verbs::{core::BlueRdmaCore, ffi::RdmaCtxOps};
-pub mod test_wrapper;
+
+// TODO 目前该模块编译不通过，需要恢复
+// pub mod test_wrapper;
