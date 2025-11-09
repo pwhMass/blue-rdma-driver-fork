@@ -3,7 +3,7 @@ use std::{io, net::Ipv4Addr};
 use ipnetwork::Ipv4Network;
 
 use crate::{
-    mem::{sim_alloc, DmaBufAllocator, PageWithPhysAddr},
+    mem::{DmaBufAllocator, PageWithPhysAddr},
     net::config::{MacAddress, NetworkConfig},
     ringbuf::DescRingBufAllocator,
     verbs::dev::{EmulatedHwDevice, HwDevice, PciHwDevice},

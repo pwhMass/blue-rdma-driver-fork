@@ -14,7 +14,7 @@ use crate::{
     csr::{emulated::EmulatedDevice, hardware::SysfsPciCsrAdaptor, DeviceAdaptor},
     error::Result,
     mem::{
-        page::EmulatedPageAllocator, sim_alloc, u_dma_buf::UDmaBufAllocator, EmulatedUmemHandler,
+        page::EmulatedPageAllocator, u_dma_buf::UDmaBufAllocator, EmulatedUmemHandler,
         HostUmemHandler,
     },
 };
@@ -149,13 +149,12 @@ impl HwDevice for EmulatedHwDevice {
     }
 
     fn new_dma_buf_allocator(&self) -> Result<Self::DmaBufAllocator> {
-        Ok(EmulatedPageAllocator::new(
-            sim_alloc::page_start_addr()..sim_alloc::heap_start_addr(),
-        ))
+        let mut pa_va_map = self.pa_va_map.write();
+        Ok(EmulatedPageAllocator::new(None, &mut pa_va_map))
     }
 
     fn new_umem_handler(&self) -> Self::UmemHandler {
-        EmulatedUmemHandler::new(sim_alloc::shm_start_addr() as u64, self.pa_va_map.clone())
+        EmulatedUmemHandler::new(self.pa_va_map.clone())
     }
 }
 

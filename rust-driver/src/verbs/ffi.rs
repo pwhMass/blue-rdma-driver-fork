@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
 
-use crate::{mem::sim_alloc, verbs::dev::PciHwDevice};
+use crate::verbs::dev::PciHwDevice;
 
 use super::{
     ctx::{HwDeviceCtx, VerbsOps},
@@ -95,7 +95,7 @@ pub unsafe trait RdmaCtxOps {
 
 #[repr(C)]
 // this struct represent the `bluerdma_device` struct in `bluerdma.h` at `rdma-core/providers/bluerdma/`
-// the padding size should match the C's definition. 
+// the padding size should match the C's definition.
 struct BlueRdmaDevice {
     pad: [u8; 712],
     driver: *mut core::ffi::c_void,

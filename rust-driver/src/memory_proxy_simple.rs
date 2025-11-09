@@ -156,6 +156,14 @@ impl SimpleTcpClient {
 }
 
 // TODO 与 CSR UDP内存请求整合
+// TODO 还可以继续优化处理逻辑，一次性读取或者写入更多的字节，可以等到使用async 的时候再说
+
+/// Simulation-mode memory proxy client for emulating PCIe DMA operations.
+///
+/// # WARNING: Behavioral Differences from Real PCIe Hardware
+///
+/// This proxy simulates PCIe DMA memory access via TCP/UDP in simulation mode,
+/// but its behavior **fundamentally differs** from real PCIe bus mastering:
 pub(crate) struct SimpleMemoryProxyClient {
     tcp_client: SimpleTcpClient,
     pa_va_map: Arc<RwLock<PaVaMap>>,
@@ -236,8 +244,14 @@ impl SimpleMemoryProxyClient {
             req.request_id
         );
 
-        //TODO 实现真正的读操作
-        let vir_addr = (req.address + SHM_START_ADDR as u64) as *const u8;
+        let pa_va_map = self.pa_va_map.read();
+        let (vir_addr, remain_len) = pa_va_map.lookup(req.address).unwrap();
+
+        assert!(
+            remain_len >= req.length,
+            "Not enough contiguous memory for read request"
+        );
+        let vir_addr = vir_addr as *const u8;
 
         let mut data = Vec::with_capacity(req.length);
 
@@ -269,8 +283,15 @@ impl SimpleMemoryProxyClient {
             req.length
         );
 
-        //TODO 实现真正的读操作
-        let vir_addr = (req.address + SHM_START_ADDR as u64) as *mut u8;
+        let pa_va_map = self.pa_va_map.read();
+        let (vir_addr, remain_len) = pa_va_map.lookup(req.address).unwrap();
+
+        assert!(
+            remain_len >= req.length,
+            "Not enough contiguous memory for read request"
+        );
+
+        let vir_addr = vir_addr as *mut u8;
 
         for (i, byte) in req.data.unwrap().iter().enumerate() {
             unsafe {

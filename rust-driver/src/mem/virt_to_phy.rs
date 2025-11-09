@@ -65,6 +65,7 @@ pub(crate) type PhysAddrResolver = PhysAddrResolverLinuxX86;
 
 pub(crate) struct PhysAddrResolverLinuxX86;
 
+// TODO 需要重构，使得类型更为严谨
 #[allow(
     clippy::as_conversions,
     clippy::arithmetic_side_effects,
@@ -175,7 +176,10 @@ impl PhysAddrResolverEmulated {
 
 impl AddressResolver for PhysAddrResolverEmulated {
     fn virt_to_phys(&self, virt_addr: u64) -> io::Result<Option<u64>> {
-        debug!("virt_addr = {virt_addr:x}, heap_start_addr={:x}\n", self.heap_start_addr);
+        debug!(
+            "virt_addr = {virt_addr:x}, heap_start_addr={:x}\n",
+            self.heap_start_addr
+        );
         Ok(virt_addr.checked_sub(self.heap_start_addr))
     }
 }

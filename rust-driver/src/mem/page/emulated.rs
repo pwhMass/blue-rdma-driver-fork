@@ -1,12 +1,14 @@
 use std::{ffi::c_void, io, ops::Range};
 
 use crate::mem::{
-    sim_alloc,
+    pa_va_map::{self, PaVaMap},
     virt_to_phy::{AddressResolver, PhysAddrResolverEmulated},
     DmaBuf, DmaBufAllocator, PageWithPhysAddr, PAGE_SIZE,
 };
 
 use super::{ContiguousPages, MmapMut, PageAllocator};
+
+const DEFAULT_ALLOCATOR_SIZE: usize = 128 * 1024 * 1024; // 128 MiB
 
 /// A page allocator for allocating pages of emulated physical memory
 #[derive(Debug)]
@@ -24,10 +26,29 @@ impl<const N: usize> EmulatedPageAllocator<N> {
 
     /// Creates a new `EmulatedPageAllocator`
     #[allow(clippy::as_conversions)] // usize to *mut c_void is safe
-    pub(crate) fn new(addr_range: Range<usize>) -> Self {
-        let inner: Vec<_> = addr_range
+    pub(crate) fn new(size: Option<usize>, pa_va_map: &mut PaVaMap) -> Self {
+        let size = size.unwrap_or(DEFAULT_ALLOCATOR_SIZE);
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                size,  // 修复: 分配完整的 size 大小的内存
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_ANONYMOUS | libc::MAP_PRIVATE,
+                -1,
+                0,
+            )
+        };
+
+        if ptr == libc::MAP_FAILED {
+            panic!("Failed to allocate memory");
+        }
+
+        // WARN: 假设va永远不会与真实的pa重叠
+        pa_va_map.insert(ptr as u64, ptr as u64, size);
+
+        let inner: Vec<_> = (0..size)
             .step_by(PAGE_SIZE)
-            .map(|addr| MmapMut::new(addr as *mut c_void, PAGE_SIZE))
+            .map(|offset| MmapMut::new(unsafe { ptr.offset(offset as isize) }, PAGE_SIZE))
             .collect();
 
         Self { inner }
@@ -51,9 +72,40 @@ impl DmaBufAllocator for EmulatedPageAllocator<1> {
             .inner
             .pop()
             .ok_or(io::Error::from(io::ErrorKind::OutOfMemory))?;
-        let resolver = PhysAddrResolverEmulated::new(sim_alloc::shm_start_addr() as u64);
-        //TODO 需要修改，需要注册到pa_va_map
-        let phys_addr = resolver.virt_to_phys(buf.as_ptr() as u64)?.unwrap();
+        //WARN 假设 DMA buffer 的va = pa
+        let phys_addr = buf.as_ptr() as u64;
         Ok(DmaBuf::new(buf, phys_addr))
+    }
+}
+
+#[test]
+fn test_libc_behave() {
+    unsafe {
+        let ptr = libc::mmap(
+            std::ptr::null_mut(),
+            PAGE_SIZE,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANON,
+            -1,
+            0,
+        );
+
+        let result = unsafe { libc::mlock(ptr, PAGE_SIZE) };
+
+        println!("result is {}", result);
+        let result = unsafe { libc::mlock(ptr, PAGE_SIZE) };
+
+        println!("result is {}", result);
+
+        let result = unsafe { libc::munlock(ptr as *const std::ffi::c_void, PAGE_SIZE) };
+
+        println!("result is {}", result);
+        let result = unsafe { libc::munlock(ptr as *const std::ffi::c_void, PAGE_SIZE) };
+
+        println!("result is {}", result);
+        assert_ne!(ptr, libc::MAP_FAILED);
+        println!("mmap ptr: {:p}", ptr);
+        println!("page size: {}", PAGE_SIZE);
+        let _ = libc::munmap(ptr, PAGE_SIZE);
     }
 }

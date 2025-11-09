@@ -1,6 +1,7 @@
 use std::{
     io,
     ops::{Deref, DerefMut},
+    sync::Arc,
 };
 
 /// Tools for converting virtual address to physicall address
@@ -15,7 +16,7 @@ pub(crate) mod u_dma_buf;
 
 mod utils;
 
-pub(crate) mod sim_alloc;
+// pub(crate) mod sim_alloc;
 
 /// PA ↔ VA bidirectional mapping for simulation mode
 pub(crate) mod pa_va_map;
@@ -23,6 +24,8 @@ pub(crate) mod pa_va_map;
 use page::MmapMut;
 pub(crate) use utils::*;
 use virt_to_phy::{AddressResolver, PhysAddrResolverEmulated, PhysAddrResolverLinuxX86};
+
+use crate::mem::pa_va_map::PaVaMap;
 
 /// Number of bits for a 4KB page size
 #[cfg(target_arch = "x86_64")]
@@ -143,6 +146,7 @@ impl HostUmemHandler {
     }
 }
 
+// TODO cuda Unified Memory 和 Pin memory 这两套系统可能会冲突，需要再次确认，同时传进来的时候可能就已经pin住了
 impl MemoryPinner for HostUmemHandler {
     fn pin_pages(&self, addr: u64, length: usize) -> io::Result<()> {
         let result = unsafe { libc::mlock(addr as *const std::ffi::c_void, length) };
@@ -180,18 +184,16 @@ impl AddressResolver for HostUmemHandler {
 
 impl UmemHandler for HostUmemHandler {}
 
+// 需要真正地pin住内存，来模仿实际的情况
 pub(crate) struct EmulatedUmemHandler {
-    resolver: PhysAddrResolverEmulated,
-    pa_va_map: std::sync::Arc<parking_lot::RwLock<pa_va_map::PaVaMap>>,
+    resolver: PhysAddrResolverLinuxX86,
+    pa_va_map: Arc<parking_lot::RwLock<PaVaMap>>,
 }
 
 impl EmulatedUmemHandler {
-    pub(crate) fn new(
-        heap_start_addr: u64,
-        pa_va_map: std::sync::Arc<parking_lot::RwLock<pa_va_map::PaVaMap>>,
-    ) -> Self {
+    pub(crate) fn new(pa_va_map: Arc<parking_lot::RwLock<PaVaMap>>) -> Self {
         Self {
-            resolver: PhysAddrResolverEmulated::new(heap_start_addr),
+            resolver: PhysAddrResolverLinuxX86,
             pa_va_map,
         }
     }
@@ -199,48 +201,48 @@ impl EmulatedUmemHandler {
 
 impl MemoryPinner for EmulatedUmemHandler {
     fn pin_pages(&self, addr: u64, length: usize) -> io::Result<()> {
-        // TODO
-        // {
-        //     // Convert VA to PA using the emulated resolver
-        //     if let Some(pa) = self.resolver.virt_to_phys(addr)? {
-        //         // Register PA ↔ VA mapping in the device's table
-        //         self.pa_va_map.write().insert(pa, addr, length);
-        //         log::debug!(
-        //             "EmulatedUmemHandler: Registered MR mapping PA {:#x} -> VA {:#x}, length {}",
-        //             pa,
-        //             addr,
-        //             length
-        //         );
-        //     } else {
-        //         log::warn!(
-        //             "EmulatedUmemHandler: Failed to resolve VA {:#x} to PA during pin",
-        //             addr
-        //         );
-        //     }
-        // }
+        let result = unsafe { libc::mlock(addr as *const std::ffi::c_void, length) };
+        if result != 0 {
+            return Err(io::Error::new(io::ErrorKind::Other, "failed to lock pages"));
+        }
+
+        let num_pages = get_num_page(addr, length);
+        let pas = self.resolver.virt_to_phys_range(addr, num_pages)?;
+        for (i, pa) in pas.iter().enumerate() {
+            // TODO 增加错误处理，不够严谨
+            let pa = pa.unwrap();
+            let va = addr + i as u64 * PAGE_SIZE as u64;
+            let mut pa_va_map = self.pa_va_map.write();
+            pa_va_map.insert(pa, va, PAGE_SIZE);
+        }
         Ok(())
     }
 
     fn unpin_pages(&self, addr: u64, length: usize) -> io::Result<()> {
-        // TODO
-        // {
-        //     // Convert VA to PA and remove from mapping table
-        //     if let Some(pa) = self.resolver.virt_to_phys(addr)? {
-        //         self.pa_va_map.write().remove(pa);
-        //         log::debug!(
-        //             "EmulatedUmemHandler: Unregistered MR mapping PA {:#x} <- VA {:#x}",
-        //             pa,
-        //             addr
-        //         );
-        //     }
-        // }
+        let result = unsafe { libc::munlock(addr as *const std::ffi::c_void, length) };
+        if result != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "failed to unlock pages",
+            ));
+        }
+
+        let num_pages = get_num_page(addr, length);
+        let pas = self.resolver.virt_to_phys_range(addr, num_pages)?;
+        for (i, pa) in pas.iter().enumerate() {
+            // TODO 增加错误处理，不够严谨
+            let pa = pa.unwrap();
+
+            let mut pa_va_map = self.pa_va_map.write();
+            pa_va_map.remove(pa);
+        }
         Ok(())
     }
 }
 
 impl AddressResolver for EmulatedUmemHandler {
     fn virt_to_phys(&self, virt_addr: u64) -> io::Result<Option<u64>> {
-        self.resolver.virt_to_phys(virt_addr)
+        Ok(self.pa_va_map.read().lookup_by_va(virt_addr))
     }
 }
 

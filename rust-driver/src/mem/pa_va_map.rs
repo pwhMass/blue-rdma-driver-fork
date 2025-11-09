@@ -9,7 +9,7 @@
  * The mapping table is only compiled and used in simulation mode (feature = "sim").
  */
 
-use parking_lot::RwLock;
+use core::panic;
 use std::collections::BTreeMap;
 
 /// A range of memory addresses with its corresponding mapping
@@ -38,24 +38,44 @@ impl AddressRange {
             None
         }
     }
+
+    /// Convert a physical address to virtual address and return remaining length
+    ///
+    /// # Returns
+    ///
+    /// `Some((va, remaining_len))` where:
+    /// - `va`: Virtual address corresponding to the PA
+    /// - `remaining_len`: Bytes remaining from this VA to the end of the range
+    fn pa_to_va_with_len(&self, pa: u64) -> Option<(u64, usize)> {
+        if self.contains(pa) {
+            let offset = pa - self.pa_start;
+            let va = self.va_start + offset;
+            let remaining_len = (self.pa_end - pa) as usize;
+            Some((va, remaining_len))
+        } else {
+            None
+        }
+    }
 }
 
 /// Global bidirectional mapping table for PA ↔ VA translation
+///
+/// Thread-safety must be managed by the caller (typically through Arc<RwLock<PaVaMap>>)
 pub(crate) struct PaVaMap {
     /// Mapping from PA ranges to VA ranges
     /// Key: PA start address, Value: AddressRange
-    ranges: RwLock<BTreeMap<u64, AddressRange>>,
+    ranges: BTreeMap<u64, AddressRange>,
     /// Reverse mapping from VA to PA for fast VA→PA lookups
     /// Key: VA start address, Value: PA start address
-    va_to_pa: RwLock<BTreeMap<u64, u64>>,
+    va_to_pa: BTreeMap<u64, u64>,
 }
 
 impl PaVaMap {
     /// Create a new empty mapping table
-    pub(crate) const fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            ranges: RwLock::new(BTreeMap::new()),
-            va_to_pa: RwLock::new(BTreeMap::new()),
+            ranges: BTreeMap::new(),
+            va_to_pa: BTreeMap::new(),
         }
     }
 
@@ -70,17 +90,16 @@ impl PaVaMap {
     /// # Panics
     ///
     /// Panics if the region overlaps with an existing mapping
-    pub(crate) fn insert(&self, pa: u64, va: u64, size: usize) {
+    pub(crate) fn insert(&mut self, pa: u64, va: u64, size: usize) {
+
         let range = AddressRange {
             pa_start: pa,
             pa_end: pa + size as u64,
             va_start: va,
         };
 
-        let mut ranges = self.ranges.write();
-
         // Check for overlaps with existing ranges
-        for existing_range in ranges.values() {
+        for existing_range in self.ranges.values() {
             if (range.pa_start < existing_range.pa_end && range.pa_end > existing_range.pa_start) {
                 panic!(
                     "PA range overlap detected: new [{:#x}, {:#x}) conflicts with existing [{:#x}, {:#x})",
@@ -89,12 +108,10 @@ impl PaVaMap {
             }
         }
 
-        let _ = ranges.insert(pa, range);
-        drop(ranges); // Release the write lock on ranges
+        let _ = self.ranges.insert(pa, range);
 
         // Insert reverse mapping VA → PA
-        let mut va_to_pa = self.va_to_pa.write();
-        let _ = va_to_pa.insert(va, pa);
+        let _ = self.va_to_pa.insert(va, pa);
 
         log::debug!(
             "PA_VA_MAP: Inserted mapping PA [{:#x}, {:#x}) -> VA [{:#x}, {:#x})",
@@ -113,15 +130,17 @@ impl PaVaMap {
     ///
     /// # Returns
     ///
-    /// The corresponding virtual address, or `None` if not found
-    pub(crate) fn lookup(&self, pa: u64) -> Option<u64> {
-        let ranges = self.ranges.read();
-
+    /// A tuple of `(va, remaining_len)` where:
+    /// - `va`: The corresponding virtual address
+    /// - `remaining_len`: Bytes remaining from this VA to the end of the mapped range
+    ///
+    /// Returns `None` if the PA is not found in any mapped range
+    pub(crate) fn lookup(&self, pa: u64) -> Option<(u64, usize)> {
         // Use BTreeMap's range query to efficiently find the range
         // We look for the largest key that is <= pa
-        for (_, range) in ranges.range(..=pa).rev() {
-            if let Some(va) = range.pa_to_va(pa) {
-                return Some(va);
+        for (_, range) in self.ranges.range(..=pa).rev() {
+            if let Some((va, remaining_len)) = range.pa_to_va_with_len(pa) {
+                return Some((va, remaining_len));
             }
         }
 
@@ -139,9 +158,7 @@ impl PaVaMap {
     ///
     /// The corresponding physical address start, or `None` if not found
     pub(crate) fn lookup_by_va(&self, va: u64) -> Option<u64> {
-        let va_to_pa = self.va_to_pa.read();
-
-        match va_to_pa.get(&va) {
+        match self.va_to_pa.get(&va) {
             Some(&pa) => Some(pa),
             None => {
                 log::warn!("PA_VA_MAP: Failed to lookup VA {:#x}", va);
@@ -155,15 +172,12 @@ impl PaVaMap {
     /// # Arguments
     ///
     /// * `pa` - Physical address start of the region to remove
-    pub(crate) fn remove(&self, pa: u64) {
-        let mut ranges = self.ranges.write();
-        if let Some(range) = ranges.remove(&pa) {
+    pub(crate) fn remove(&mut self, pa: u64) {
+        if let Some(range) = self.ranges.remove(&pa) {
             let va = range.va_start;
-            drop(ranges); // Release write lock on ranges
 
             // Remove reverse mapping VA → PA
-            let mut va_to_pa = self.va_to_pa.write();
-            let _ = va_to_pa.remove(&va);
+            let _ = self.va_to_pa.remove(&va);
 
             log::debug!(
                 "PA_VA_MAP: Removed mapping PA [{:#x}, {:#x}) -> VA [{:#x}, {:#x})",
@@ -173,7 +187,10 @@ impl PaVaMap {
                 range.va_start + (range.pa_end - range.pa_start)
             );
         } else {
-            log::warn!("PA_VA_MAP: Attempted to remove non-existent mapping at PA {:#x}", pa);
+            panic!(
+                "PA_VA_MAP: Attempted to remove non-existent mapping at PA {:#x}",
+                pa
+            );
         }
     }
 
@@ -184,15 +201,11 @@ impl PaVaMap {
     /// * `va` - Virtual address start of the region to remove
     ///
     /// This is useful for unpinning operations where the VA is known but PA needs to be looked up.
-    pub(crate) fn remove_by_va(&self, va: u64) {
+    pub(crate) fn remove_by_va(&mut self, va: u64) {
         // First lookup PA from VA
-        let mut va_to_pa = self.va_to_pa.write();
-        if let Some(pa) = va_to_pa.remove(&va) {
-            drop(va_to_pa); // Release write lock on va_to_pa
-
+        if let Some(pa) = self.va_to_pa.remove(&va) {
             // Remove from main ranges map
-            let mut ranges = self.ranges.write();
-            if let Some(range) = ranges.remove(&pa) {
+            if let Some(range) = self.ranges.remove(&pa) {
                 log::debug!(
                     "PA_VA_MAP: Removed mapping VA [{:#x}, {:#x}) -> PA [{:#x}, {:#x})",
                     range.va_start,
@@ -201,31 +214,32 @@ impl PaVaMap {
                     range.pa_end
                 );
             } else {
-                log::warn!(
-                    "PA_VA_MAP: Inconsistent state - VA {:#x} mapped to PA {:#x} but PA mapping not found",
-                    va, pa
-                );
+                panic!("PA_VA_MAP: Inconsistent state - VA {:#x} mapped to PA {:#x} but PA mapping not found",
+                    va, pa);
             }
         } else {
-            log::warn!("PA_VA_MAP: Attempted to remove non-existent mapping at VA {:#x}", va);
+            panic!(
+                "PA_VA_MAP: Attempted to remove non-existent mapping at VA {:#x}",
+                va
+            );
         }
     }
 
     /// Get the number of registered regions
     pub(crate) fn len(&self) -> usize {
-        self.ranges.read().len()
+        self.ranges.len()
     }
 
     /// Check if the mapping table is empty
     pub(crate) fn is_empty(&self) -> bool {
-        self.ranges.read().is_empty()
+        self.ranges.is_empty()
     }
 
     /// Clear all mappings (primarily for testing)
     #[cfg(test)]
-    pub(crate) fn clear(&self) {
-        self.ranges.write().clear();
-        self.va_to_pa.write().clear();
+    pub(crate) fn clear(&mut self) {
+        self.ranges.clear();
+        self.va_to_pa.clear();
     }
 }
 
@@ -235,15 +249,18 @@ mod tests {
 
     #[test]
     fn test_insert_and_lookup() {
-        let map = PaVaMap::new();
+        let mut map = PaVaMap::new();
 
-        // Insert a mapping
+        // Insert a mapping: PA [0x1000, 0x2000) -> VA [0x7000, 0x8000)
         map.insert(0x1000, 0x7000, 0x1000);
 
         // Lookup addresses within the range
-        assert_eq!(map.lookup(0x1000), Some(0x7000));
-        assert_eq!(map.lookup(0x1500), Some(0x7500));
-        assert_eq!(map.lookup(0x1fff), Some(0x7fff));
+        // At PA 0x1000: VA 0x7000, remaining = 0x2000 - 0x1000 = 0x1000 (4096 bytes)
+        assert_eq!(map.lookup(0x1000), Some((0x7000, 0x1000)));
+        // At PA 0x1500: VA 0x7500, remaining = 0x2000 - 0x1500 = 0xb00 (2816 bytes)
+        assert_eq!(map.lookup(0x1500), Some((0x7500, 0xb00)));
+        // At PA 0x1fff: VA 0x7fff, remaining = 0x2000 - 0x1fff = 1 byte
+        assert_eq!(map.lookup(0x1fff), Some((0x7fff, 1)));
 
         // Lookup addresses outside the range
         assert_eq!(map.lookup(0x0fff), None);
@@ -252,22 +269,29 @@ mod tests {
 
     #[test]
     fn test_multiple_ranges() {
-        let map = PaVaMap::new();
+        let mut map = PaVaMap::new();
 
         // Insert multiple non-overlapping ranges
+        // Range 1: PA [0x1000, 0x2000) -> VA [0x7000, 0x8000)
         map.insert(0x1000, 0x7000, 0x1000);
+        // Range 2: PA [0x3000, 0x5000) -> VA [0x8000, 0xa000)
         map.insert(0x3000, 0x8000, 0x2000);
+        // Range 3: PA [0x6000, 0x7000) -> VA [0xa000, 0xb000)
         map.insert(0x6000, 0xa000, 0x1000);
 
         // Lookup in first range
-        assert_eq!(map.lookup(0x1500), Some(0x7500));
+        // At PA 0x1500: remaining = 0x2000 - 0x1500 = 0xb00
+        assert_eq!(map.lookup(0x1500), Some((0x7500, 0xb00)));
 
         // Lookup in second range
-        assert_eq!(map.lookup(0x3500), Some(0x8500));
-        assert_eq!(map.lookup(0x4fff), Some(0x9fff));
+        // At PA 0x3500: remaining = 0x5000 - 0x3500 = 0x1b00
+        assert_eq!(map.lookup(0x3500), Some((0x8500, 0x1b00)));
+        // At PA 0x4fff: remaining = 0x5000 - 0x4fff = 1
+        assert_eq!(map.lookup(0x4fff), Some((0x9fff, 1)));
 
         // Lookup in third range
-        assert_eq!(map.lookup(0x6500), Some(0xa500));
+        // At PA 0x6500: remaining = 0x7000 - 0x6500 = 0xb00
+        assert_eq!(map.lookup(0x6500), Some((0xa500, 0xb00)));
 
         // Lookup in gaps
         assert_eq!(map.lookup(0x2000), None);
@@ -277,10 +301,10 @@ mod tests {
 
     #[test]
     fn test_remove() {
-        let map = PaVaMap::new();
+        let mut map = PaVaMap::new();
 
         map.insert(0x1000, 0x7000, 0x1000);
-        assert_eq!(map.lookup(0x1500), Some(0x7500));
+        assert_eq!(map.lookup(0x1500), Some((0x7500, 0xb00)));
 
         map.remove(0x1000);
         assert_eq!(map.lookup(0x1500), None);
@@ -289,7 +313,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "PA range overlap detected")]
     fn test_overlap_detection() {
-        let map = PaVaMap::new();
+        let mut map = PaVaMap::new();
 
         // Insert first range
         map.insert(0x1000, 0x7000, 0x2000);
@@ -300,20 +324,22 @@ mod tests {
 
     #[test]
     fn test_adjacent_ranges() {
-        let map = PaVaMap::new();
+        let mut map = PaVaMap::new();
 
         // Insert adjacent (non-overlapping) ranges
         map.insert(0x1000, 0x7000, 0x1000);
         map.insert(0x2000, 0x8000, 0x1000);
 
         // Both ranges should be accessible
-        assert_eq!(map.lookup(0x1fff), Some(0x7fff));
-        assert_eq!(map.lookup(0x2000), Some(0x8000));
+        // At PA 0x1fff: last byte of first range, remaining = 1
+        assert_eq!(map.lookup(0x1fff), Some((0x7fff, 1)));
+        // At PA 0x2000: first byte of second range, remaining = 0x1000
+        assert_eq!(map.lookup(0x2000), Some((0x8000, 0x1000)));
     }
 
     #[test]
     fn test_len_and_is_empty() {
-        let map = PaVaMap::new();
+        let mut map = PaVaMap::new();
 
         assert!(map.is_empty());
         assert_eq!(map.len(), 0);
@@ -334,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_lookup_by_va() {
-        let map = PaVaMap::new();
+        let mut map = PaVaMap::new();
 
         // Insert mappings
         map.insert(0x1000, 0x7000, 0x1000);
@@ -354,13 +380,13 @@ mod tests {
 
     #[test]
     fn test_bidirectional_lookup() {
-        let map = PaVaMap::new();
+        let mut map = PaVaMap::new();
 
         map.insert(0x1000, 0x7000, 0x1000);
 
-        // Test PA → VA
-        assert_eq!(map.lookup(0x1000), Some(0x7000));
-        assert_eq!(map.lookup(0x1500), Some(0x7500));
+        // Test PA → VA (with remaining length)
+        assert_eq!(map.lookup(0x1000), Some((0x7000, 0x1000)));
+        assert_eq!(map.lookup(0x1500), Some((0x7500, 0xb00)));
 
         // Test VA → PA
         assert_eq!(map.lookup_by_va(0x7000), Some(0x1000));
@@ -368,14 +394,14 @@ mod tests {
 
     #[test]
     fn test_remove_by_va() {
-        let map = PaVaMap::new();
+        let mut map = PaVaMap::new();
 
         // Insert mapping
         map.insert(0x1000, 0x7000, 0x1000);
 
         // Verify it exists
         assert_eq!(map.lookup_by_va(0x7000), Some(0x1000));
-        assert_eq!(map.lookup(0x1000), Some(0x7000));
+        assert_eq!(map.lookup(0x1000), Some((0x7000, 0x1000)));
 
         // Remove by VA
         map.remove_by_va(0x7000);
@@ -388,14 +414,14 @@ mod tests {
 
     #[test]
     fn test_remove_maintains_both_indices() {
-        let map = PaVaMap::new();
+        let mut map = PaVaMap::new();
 
         // Insert mapping
         map.insert(0x1000, 0x7000, 0x1000);
 
         // Verify it exists
         assert_eq!(map.lookup_by_va(0x7000), Some(0x1000));
-        assert_eq!(map.lookup(0x1000), Some(0x7000));
+        assert_eq!(map.lookup(0x1000), Some((0x7000, 0x1000)));
 
         // Remove by PA (original method)
         map.remove(0x1000);
@@ -408,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_bidirectional_with_multiple_ranges() {
-        let map = PaVaMap::new();
+        let mut map = PaVaMap::new();
 
         // Insert multiple ranges
         map.insert(0x1000, 0x7000, 0x1000);
@@ -420,10 +446,10 @@ mod tests {
         assert_eq!(map.lookup_by_va(0x8000), Some(0x3000));
         assert_eq!(map.lookup_by_va(0xa000), Some(0x6000));
 
-        // Test all PA → VA lookups
-        assert_eq!(map.lookup(0x1000), Some(0x7000));
-        assert_eq!(map.lookup(0x3000), Some(0x8000));
-        assert_eq!(map.lookup(0x6000), Some(0xa000));
+        // Test all PA → VA lookups (with remaining length)
+        assert_eq!(map.lookup(0x1000), Some((0x7000, 0x1000)));
+        assert_eq!(map.lookup(0x3000), Some((0x8000, 0x2000)));
+        assert_eq!(map.lookup(0x6000), Some((0xa000, 0x1000)));
 
         // Remove middle range by VA
         map.remove_by_va(0x8000);
@@ -437,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_clear_removes_both_indices() {
-        let map = PaVaMap::new();
+        let mut map = PaVaMap::new();
 
         // Insert multiple mappings
         map.insert(0x1000, 0x7000, 0x1000);
@@ -454,5 +480,27 @@ mod tests {
         assert_eq!(map.lookup_by_va(0x8000), None);
         assert_eq!(map.lookup(0x1000), None);
         assert_eq!(map.lookup(0x2000), None);
+    }
+
+    #[test]
+    fn test_remaining_length_calculation() {
+        let mut map = PaVaMap::new();
+
+        // Insert a 4KB range: PA [0x1000, 0x2000) -> VA [0x7000, 0x8000)
+        map.insert(0x1000, 0x7000, 0x1000);
+
+        // Test remaining length at different offsets
+        assert_eq!(map.lookup(0x1000), Some((0x7000, 0x1000))); // 4096 bytes remaining
+        assert_eq!(map.lookup(0x1001), Some((0x7001, 0xfff))); // 4095 bytes remaining
+        assert_eq!(map.lookup(0x1800), Some((0x7800, 0x800))); // 2048 bytes remaining
+        assert_eq!(map.lookup(0x1fff), Some((0x7fff, 1))); // 1 byte remaining
+
+        // Insert a larger range to test: PA [0x10000, 0x20000) -> VA [0x50000, 0x60000)
+        map.insert(0x10000, 0x50000, 0x10000);
+
+        // Test various positions in the 64KB range
+        assert_eq!(map.lookup(0x10000), Some((0x50000, 0x10000))); // 65536 bytes
+        assert_eq!(map.lookup(0x18000), Some((0x58000, 0x8000))); // 32768 bytes
+        assert_eq!(map.lookup(0x1ffff), Some((0x5ffff, 1))); // 1 byte
     }
 }

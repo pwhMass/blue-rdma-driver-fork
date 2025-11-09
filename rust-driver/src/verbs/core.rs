@@ -17,8 +17,7 @@ use crate::RdmaCtxOps;
 use crate::{
     config::{ConfigLoader, DeviceConfig},
     mem::{
-        page::EmulatedPageAllocator, sim_alloc, virt_to_phy::PhysAddrResolverEmulated,
-        EmulatedUmemHandler,
+        page::EmulatedPageAllocator, virt_to_phy::PhysAddrResolverEmulated, EmulatedUmemHandler,
     },
     net::config::{MacAddress, NetworkConfig},
     workers::{completion::Completion, qp_timeout::AckTimeoutConfig},
@@ -32,8 +31,6 @@ use super::{
 };
 
 use crate::error::Result;
-
-static HEAP_ALLOCATOR: sim_alloc::Simalloc = sim_alloc::Simalloc::new();
 
 macro_rules! deref_or_ret {
     ($ptr:expr, $ret:expr) => {
@@ -78,14 +75,8 @@ impl BlueRdmaCore {
     #[allow(clippy::unwrap_used, clippy::unwrap_in_result)]
     fn new_emulated(sysfs_name: &str) -> Result<HwDeviceCtx<EmulatedHwDevice>> {
         let device = match sysfs_name {
-            "uverbs0" => {
-                sim_alloc::init_global_allocator(0, &HEAP_ALLOCATOR);
-                EmulatedHwDevice::new("127.0.0.1:7701".into(), "127.0.0.1:7003".into())
-            }
-            "uverbs1" => {
-                sim_alloc::init_global_allocator(1, &HEAP_ALLOCATOR);
-                EmulatedHwDevice::new("127.0.0.1:7702".into(), "127.0.0.1:7004".into())
-            }
+            "uverbs0" => EmulatedHwDevice::new("127.0.0.1:7701".into(), "127.0.0.1:7003".into()),
+            "uverbs1" => EmulatedHwDevice::new("127.0.0.1:7702".into(), "127.0.0.1:7004".into()),
             _ => unreachable!("unexpected sysfs_name"),
         };
         let (post_recv_ip, post_recv_peer_ip) = match sysfs_name {
