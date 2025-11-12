@@ -1,5 +1,10 @@
 KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
 
+# OFED Module.symvers for symbol version matching
+ARCH := $(shell uname -m)
+KVER := $(shell uname -r)
+OFED_SYMVERS := /usr/src/ofa_kernel/$(ARCH)/$(KVER)/Module.symvers
+
 BUILD_DIR := build
 BLUERDMA_SRC_DIR := kernel-driver
 UDMABUF_SRC_DIR := third_party/udmabuf
@@ -35,7 +40,7 @@ $(BUILD_DIR):
 modules: bluerdma udmabuf
 
 bluerdma: $(BUILD_DIR)
-	$(MAKE) -C $(KERNEL_SRC) M=$(CURDIR)/$(BLUERDMA_SRC_DIR) modules
+	$(MAKE) -C $(KERNEL_SRC) M=$(CURDIR)/$(BLUERDMA_SRC_DIR) KBUILD_EXTRA_SYMBOLS=$(OFED_SYMVERS) modules
 	@mkdir -p $(BUILD_DIR)
 	cp $(BLUERDMA_SRC_DIR)/$(BLUERDMA_KO) $(BUILD_DIR)/
 
