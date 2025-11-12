@@ -197,7 +197,7 @@ impl SimpleMemoryProxyClient {
         let request = match request {
             Ok(req) => req,
             Err(e) => {
-                // 如果是超时错误，发送心跳包，很重要，因为如果一直阻塞的话缓冲区会留东西不发出去
+                // TODO 如果是超时错误，发送心跳包，一点也不重要，需要删除
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut
                 {
