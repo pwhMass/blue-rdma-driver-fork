@@ -426,6 +426,39 @@ sudo modprobe --force-modversion bluerdma
 
 ---
 
-**文档版本**: 1.0
-**最后更新**: 2025-11-12
+## 后续问题
+
+### RoCE 设备注册失败
+
+符号版本问题解决后，遇到了新的问题：**ib_register_device 失败**
+
+**问题现象**:
+```
+WARNING at device.c:841 alloc_port_data+0x10c/0x130 [ib_core]
+infiniband bluerdma0: Couldn't create per-port data
+ib_register_device failed for index 0
+```
+
+**已尝试的修复**:
+1. ✅ 添加 RoCE 必需的回调函数 (`get_link_layer`, `get_netdev`)
+2. ✅ 设置设备父节点 (`ibdev->dev.parent`)
+3. ✅ 调整 netdev 关联时机（注册前关联）
+4. ❌ 所有修复均无效
+
+**根本原因**:
+- Mellanox OFED 是为**硬件 RDMA 设备**设计的
+- bluerdma 是**软件 RDMA 驱动**，架构不匹配
+- OFED 的 `alloc_port_data` 对设备有硬件相关的假设
+
+**解决方案**:
+切换到**标准 Linux RDMA 子系统**，它支持软件 RDMA 驱动（如 rxe、siw）
+
+**详细文档**: [OFED RoCE 注册问题](./ofed-roce-registration-issue.md)
+
+**迁移指南**: [切换到标准 Linux RDMA](./switch-to-vanilla-rdma.md)
+
+---
+
+**文档版本**: 1.1
+**最后更新**: 2025-11-14
 **维护者**: Claude Code Assistant
