@@ -66,3 +66,5 @@ make: *** [Makefile:136: all] Error 2
    `sudo ip addr add 17.34.51.10/24 dev blue0`  
    `sudo ip addr add 17.34.51.11/24 dev blue1`
 6. 大页准备
+
+7. 增加环境变量
