@@ -188,7 +188,8 @@ unsafe impl RdmaCtxOps for BlueRdmaCore {
             (*device_attr) = ibverbs_sys::ibv_device_attr {
                 max_qp: 256,
                 max_qp_wr: 64,
-                max_sge: 8,
+                max_sge: 1,
+                max_sge_rd: 1,
                 max_cq: 256,
                 max_cqe: 4096,
                 max_mr: 256,
@@ -401,12 +402,20 @@ unsafe impl RdmaCtxOps for BlueRdmaCore {
         bad_wr: *mut *mut ibverbs_sys::ibv_send_wr,
     ) -> ::std::os::raw::c_int {
         let qp = deref_or_ret!(qp, libc::EINVAL);
+        let wr_ptr = wr;  // Save original pointer for error reporting
         let wr = deref_or_ret!(wr, libc::EINVAL);
         let context = qp.context;
         let qp_num = qp.qp_num;
         let bluerdma = get_device(context);
-        let wr = SendWr::new(wr).unwrap_or_else(|_| todo!("handle invalid input"));
-        match bluerdma.post_send(qp_num, wr) {
+        let send_wr = match SendWr::new(wr) {
+            Ok(wr) => wr,
+            Err(err) => {
+                error!("Invalid send WR: {err}");
+                unsafe { *bad_wr = wr_ptr };
+                return libc::EINVAL;
+            }
+        };
+        match bluerdma.post_send(qp_num, send_wr) {
             Ok(()) => 0,
             Err(err) => {
                 error!("Failed to post send WR: {err}");
@@ -422,12 +431,17 @@ unsafe impl RdmaCtxOps for BlueRdmaCore {
         bad_wr: *mut *mut ibverbs_sys::ibv_recv_wr,
     ) -> ::std::os::raw::c_int {
         let qp = deref_or_ret!(qp, libc::EINVAL);
+        let wr_ptr = wr;  // Save original pointer for error reporting
         let wr = deref_or_ret!(wr, libc::EINVAL);
         let context = qp.context;
         let qp_num = qp.qp_num;
         let bluerdma = unsafe { get_device(context) };
-        let wr = RecvWr::new(wr).unwrap_or_else(|| todo!("handle invalid input"));
-        match bluerdma.post_recv(qp_num, wr) {
+        let Some(recv_wr) = RecvWr::new(wr) else {
+            error!("Invalid receive WR: only single SGE is supported (num_sge must be 1)");
+            unsafe { *bad_wr = wr_ptr };
+            return libc::EINVAL;
+        };
+        match bluerdma.post_recv(qp_num, recv_wr) {
             Ok(()) => 0,
             Err(err) => {
                 error!("Failed to post recv WR: {err}");

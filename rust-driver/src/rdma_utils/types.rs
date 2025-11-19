@@ -314,6 +314,7 @@ impl RecvWr {
     pub(crate) fn new(wr: ibverbs_sys::ibv_recv_wr) -> Option<Self> {
         let num_sge = usize::try_from(wr.num_sge).ok()?;
         if num_sge != 1 {
+            log::warn!("num_sge != 1 !!!!!!!!!!!!!!!!!!!!!!!，num sge is {}", num_sge);
             return None;
         }
         // SAFETY: sg_list is valid when num_sge > 0, which we've verified above

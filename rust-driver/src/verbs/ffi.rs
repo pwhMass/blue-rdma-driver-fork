@@ -105,19 +105,15 @@ struct BlueRdmaDevice {
 pub(super) fn get_device(context: *mut ibverbs_sys::ibv_context) -> &'static mut dyn VerbsOps {
     let dev_ptr = unsafe { *context }.device.cast::<BlueRdmaDevice>();
     let driver_ptr = unsafe { (*dev_ptr).driver };
-    unsafe {
-        #[cfg(feature = "hw")]
-        {
-            driver_ptr.cast::<HwDeviceCtx<PciHwDevice>>().as_mut()
-        }
-        #[cfg(feature = "sim")]
-        {
-            driver_ptr.cast::<HwDeviceCtx<EmulatedHwDevice>>().as_mut()
-        }
-        #[cfg(feature = "mock")]
-        {
-            driver_ptr.cast::<MockDeviceCtx>().as_mut()
-        }
-    }
-    .unwrap_or_else(|| unreachable!("null device pointer"))
+
+    #[cfg(feature = "hw")]
+    let device = unsafe { driver_ptr.cast::<HwDeviceCtx<PciHwDevice>>().as_mut() };
+
+    #[cfg(feature = "sim")]
+    let device = unsafe { driver_ptr.cast::<HwDeviceCtx<EmulatedHwDevice>>().as_mut() };
+
+    #[cfg(feature = "mock")]
+    let device = unsafe { driver_ptr.cast::<MockDeviceCtx>().as_mut() };
+
+    device.unwrap_or_else(|| unreachable!("null device pointer"))
 }

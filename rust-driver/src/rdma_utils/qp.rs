@@ -17,6 +17,7 @@ use crate::{
 };
 
 /// Manages QPs
+#[derive(Debug)]
 pub(crate) struct QpManager {
     /// Bitmap tracking allocated QPNs
     bitmap: BitVec,

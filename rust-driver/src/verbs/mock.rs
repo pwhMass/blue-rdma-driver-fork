@@ -7,8 +7,9 @@
     clippy::wildcard_enum_match_arm
 )]
 
+use core::panic;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     fmt,
     io::{self, BufReader, Read, Write},
     iter,
@@ -27,7 +28,7 @@ use crate::{
     error::{RdmaError, Result},
     rdma_utils::{
         pd::PdTable,
-        qp::QpTable,
+        qp::{QpManager, QpTable},
         types::{
             ibv_qp_attr::{IbvQpAttr, IbvQpInitAttr},
             RecvWr, SendWr,
@@ -39,7 +40,6 @@ use bincode::{Decode, Encode};
 use bitvec::store::BitStore;
 use log::{debug, error, info, warn};
 use parking_lot::Mutex;
-use rand::random;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -129,7 +129,7 @@ impl QpCtx {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct MockDeviceCtx {
     mr_key: u32,
     cq_handle: u32,
@@ -139,21 +139,30 @@ pub(crate) struct MockDeviceCtx {
     recv_qp_cq_map: HashMap<u32, u32>,
     qp_ctx_table: QpTable<QpCtx>,
     qp_local_task_tx: Option<flume::Sender<LocalTask>>,
-    qpn_set: HashSet<u32>,
+    qp_manager: QpManager,
     mr_table: MrTable,
     pd_table: PdTable,
 }
 
-impl MockDeviceCtx {
-    fn rand_qpn(&mut self) -> u32 {
-        loop {
-            let qpn = random::<u32>() % 10000;
-            if !self.qpn_set.insert(qpn) {
-                break qpn;
-            }
+impl Default for MockDeviceCtx {
+    fn default() -> Self {
+        Self {
+            mr_key: 0,
+            cq_handle: 0,
+            self_ip: 0,
+            cq_table: HashMap::new(),
+            send_qp_cq_map: HashMap::new(),
+            recv_qp_cq_map: HashMap::new(),
+            qp_ctx_table: QpTable::new(),
+            qp_local_task_tx: None,
+            qp_manager: QpManager::new(),
+            mr_table: MrTable::default(),
+            pd_table: PdTable::default(),
         }
     }
 }
+
+impl MockDeviceCtx {}
 
 impl VerbsOps for MockDeviceCtx {
     fn reg_mr(
@@ -187,7 +196,10 @@ impl VerbsOps for MockDeviceCtx {
     }
 
     fn create_qp(&mut self, attr: IbvQpInitAttr) -> crate::error::Result<u32> {
-        let qpn = self.rand_qpn();
+        let qpn = self
+            .qp_manager
+            .create_qp()
+            .ok_or_else(|| RdmaError::QpError("No available QP slots".into()))?;
         if let Some(h) = attr.send_cq() {
             info!("set send cq: {h} for qp: {qpn}");
             let _ignore = self.send_qp_cq_map.insert(qpn, h);
@@ -330,11 +342,28 @@ impl VerbsOps for MockDeviceCtx {
                 | QpTransportMessage::SendResp(_) => {}
             }
         });
-        _ = self.qp_ctx_table.map_qp_mut(qpn, move |ctx| {
+
+        // Store QP context - must succeed or we leak the thread
+        let result = self.qp_ctx_table.map_qp_mut(qpn, move |ctx| {
+            if ctx.conn.is_some() {
+                panic!("QP context for QPN {qpn} already exists");
+            }
             ctx.conn = Some(conn);
             ctx.abort_signal = Some(abort_signal_c);
             ctx.handle = Some(handle);
         });
+
+        if result.is_none() {
+            // Critical failure: QP slot not found, must cleanup the spawned thread
+            error!("Failed to store QP context for QPN {qpn}, aborting thread");
+            // abort_signal.store(true, Ordering::Relaxed);
+            // self.qpn_set.remove(&qpn);
+            // return Err(RdmaError::QpError(format!(
+            //     "QP slot not found for QPN {qpn} (index {})",
+            //     qpn >> 8
+            // )));
+            panic!("");
+        }
 
         info!("mock create qp: {qpn}");
 
@@ -358,9 +387,7 @@ impl VerbsOps for MockDeviceCtx {
                 ctx.conn().connect(dqpn, dqp_ip);
             } else if let Some(dqpn) = ctx.dpqn {
                 let fallback_ip = Ipv4Addr::LOCALHOST;
-                info!(
-                    "dest ip not provided for qp {qpn}, defaulting to loopback {fallback_ip}"
-                );
+                info!("dest ip not provided for qp {qpn}, defaulting to loopback {fallback_ip}");
                 ctx.dpq_ip = Some(fallback_ip);
                 ctx.conn().connect(dqpn, fallback_ip);
             }
@@ -384,6 +411,12 @@ impl VerbsOps for MockDeviceCtx {
                 .store(true, Ordering::Relaxed);
             ctx.handle.take().unwrap().join().unwrap();
         });
+
+        // Free the QPN in the bitmap
+        if !self.qp_manager.destroy_qp(qpn) {
+            warn!("QPN {qpn} was not allocated in QpManager");
+        }
+
         info!("qp: {qpn} destroyed");
 
         Ok(())
