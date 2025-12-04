@@ -3,6 +3,7 @@ use bilge::prelude::*;
 use crate::{
     impl_desc_serde,
     ringbuf::{DescDeserialize, DescSerialize},
+    types::{RemoteAddr, VirtAddr},
     workers::send::WorkReqOpCode,
 };
 
@@ -58,7 +59,7 @@ impl SendQueueReqDescSeg0 {
         dqpn: u32,
         flags: u8,
         dqp_ip: u32,
-        raddr: u64,
+        raddr: RemoteAddr,
         rkey: u32,
         total_len: u32,
     ) -> Self {
@@ -75,7 +76,7 @@ impl SendQueueReqDescSeg0 {
         dqpn: u32,
         flags: u8,
         dqp_ip: u32,
-        raddr: u64,
+        raddr: RemoteAddr,
         rkey: u32,
         total_len: u32,
     ) -> Self {
@@ -83,7 +84,7 @@ impl SendQueueReqDescSeg0 {
         common_header.set_has_next(true);
         let c3 = SendQueueReqDescSeg0Chunk3::new(total_len, msn, common_header);
         let c2 = SendQueueReqDescSeg0Chunk2::new(dqp_ip, rkey);
-        let c1 = SendQueueReqDescSeg0Chunk1::new(raddr);
+        let c1 = SendQueueReqDescSeg0Chunk1::new(raddr.as_u64());
         let c0 = SendQueueReqDescSeg0Chunk0::new(
             u3::from_u8(0),
             u5::masked_new(flags),
@@ -225,7 +226,7 @@ impl SendQueueReqDescSeg1 {
         mac_addr: u64,
         lkey: u32,
         len: u32,
-        laddr: u64,
+        laddr: VirtAddr,
     ) -> Self {
         Self::new_inner(
             op_code, pmtu, is_first, is_last, is_retry, enable_ecn, sqpn, imm, mac_addr, lkey, len,
@@ -247,7 +248,7 @@ impl SendQueueReqDescSeg1 {
         mac_addr: u64,
         lkey: u32,
         len: u32,
-        laddr: u64,
+        laddr: VirtAddr,
     ) -> Self {
         let common_header = RingBufDescCommonHead::new_send_desc(op_code);
         let c3 = SendQueueReqDescSeg1Chunk3::new(
@@ -263,7 +264,7 @@ impl SendQueueReqDescSeg1 {
         );
         let c2 = SendQueueReqDescSeg1Chunk2::new((sqpn >> 8) as u16, u48::masked_new(mac_addr));
         let c1 = SendQueueReqDescSeg1Chunk1::new(len, lkey);
-        let c0 = SendQueueReqDescSeg1Chunk0::new(laddr);
+        let c0 = SendQueueReqDescSeg1Chunk0::new(laddr.as_u64());
 
         Self { c0, c1, c2, c3 }
     }

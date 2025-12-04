@@ -1,9 +1,12 @@
 use std::{ffi::c_void, io, ops::Range};
 
-use crate::mem::{
-    pa_va_map::{self, PaVaMap},
-    virt_to_phy::{AddressResolver, PhysAddrResolverEmulated},
-    DmaBuf, DmaBufAllocator, PageWithPhysAddr, PAGE_SIZE,
+use crate::{
+    mem::{
+        pa_va_map::{self, PaVaMap},
+        virt_to_phy::{AddressResolver, PhysAddrResolverEmulated},
+        DmaBuf, DmaBufAllocator, PageWithPhysAddr, PAGE_SIZE,
+    },
+    types::{PhysAddr, VirtAddr},
 };
 
 use super::{ContiguousPages, MmapMut, PageAllocator};
@@ -44,7 +47,7 @@ impl<const N: usize> EmulatedPageAllocator<N> {
         }
 
         // WARN: 假设va永远不会与真实的pa重叠
-        pa_va_map.insert(ptr as u64, ptr as u64, size);
+        pa_va_map.insert(PhysAddr::new(ptr as u64), VirtAddr::new(ptr as u64), size);
 
         let inner: Vec<_> = (0..size)
             .step_by(PAGE_SIZE)
@@ -72,8 +75,8 @@ impl DmaBufAllocator for EmulatedPageAllocator<1> {
             .inner
             .pop()
             .ok_or(io::Error::from(io::ErrorKind::OutOfMemory))?;
-        //WARN 假设 DMA buffer 的va = pa
-        let phys_addr = buf.as_ptr() as u64;
+        // WARN: 假设 DMA buffer 的 va = pa (仿真模式简化假设)
+        let phys_addr = PhysAddr::new(buf.as_ptr() as u64);
         Ok(DmaBuf::new(buf, phys_addr))
     }
 }

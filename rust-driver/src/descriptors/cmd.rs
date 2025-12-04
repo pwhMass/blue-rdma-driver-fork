@@ -2,6 +2,7 @@ use bilge::prelude::*;
 
 use crate::impl_desc_serde;
 use crate::ringbuf::{DescDeserialize, DescSerialize};
+use crate::types::{PhysAddr, VirtAddr};
 
 use super::RingBufDescCommonHead;
 
@@ -79,7 +80,7 @@ pub(crate) struct CmdQueueReqDescUpdateMrTable {
 impl CmdQueueReqDescUpdateMrTable {
     pub(crate) fn new(
         user_data: u8,
-        mr_base_va: u64,
+        mr_base_va: VirtAddr,
         mr_length: u32,
         mr_key: u32,
         pd_handler: u32,
@@ -91,7 +92,7 @@ impl CmdQueueReqDescUpdateMrTable {
         let cmd_queue_common_header = RingbufDescCmdQueueCommonHead::new_with_user_data(user_data);
         let header = CmdQueueReqDescHeaderChunk::new(cmd_queue_common_header, common_header);
         let c3 = CmdQueueReqDescUpdateMrTableChunk3::new(0, header);
-        let c2 = CmdQueueReqDescUpdateMrTableChunk2::new(mr_base_va);
+        let c2 = CmdQueueReqDescUpdateMrTableChunk2::new(mr_base_va.as_u64());
         let c1 = CmdQueueReqDescUpdateMrTableChunk1::new(mr_key, mr_length);
         let c0 = CmdQueueReqDescUpdateMrTableChunk0::new(
             u7::from_u8(0),
@@ -179,7 +180,7 @@ pub(crate) struct CmdQueueReqDescUpdatePGT {
 impl CmdQueueReqDescUpdatePGT {
     pub(crate) fn new(
         user_data: u8,
-        dma_addr: u64,
+        dma_addr: PhysAddr,
         start_index: u32,
         zero_based_entry_count: u32,
     ) -> Self {
@@ -187,7 +188,7 @@ impl CmdQueueReqDescUpdatePGT {
         let cmd_queue_common_header = RingbufDescCmdQueueCommonHead::new_with_user_data(user_data);
         let headers = CmdQueueReqDescHeaderChunk::new(cmd_queue_common_header, common_header);
         let c3 = CmdQueueReqDescUpdatePGTChunk3::new(0, headers);
-        let c2 = CmdQueueReqDescUpdatePGTChunk2::new(dma_addr);
+        let c2 = CmdQueueReqDescUpdatePGTChunk2::new(dma_addr.as_u64());
         let c1 = CmdQueueReqDescUpdatePGTChunk1::new(zero_based_entry_count, start_index);
         let c0 = CmdQueueReqDescUpdatePGTChunk0::new(0);
 
@@ -567,7 +568,7 @@ pub(crate) struct CmdQueueReqDescSetRawPacketReceiveMeta {
 }
 
 impl CmdQueueReqDescSetRawPacketReceiveMeta {
-    pub(crate) fn new(user_data: u8, write_base_addr: u64) -> Self {
+    pub(crate) fn new(user_data: u8, write_base_addr: PhysAddr) -> Self {
         let common_header =
             RingBufDescCommonHead::new_cmd_desc(CmdQueueDescOperators::SetRawPacketReceiveMeta);
         let cmd_queue_common_header = RingbufDescCmdQueueCommonHead::new_with_user_data(user_data);
@@ -576,7 +577,7 @@ impl CmdQueueReqDescSetRawPacketReceiveMeta {
             cmd_queue_common_header,
             common_header,
         );
-        let c2 = CmdQueueReqDescSetRawPacketReceiveMetaChunk2::new(write_base_addr);
+        let c2 = CmdQueueReqDescSetRawPacketReceiveMetaChunk2::new(write_base_addr.as_u64());
         let c1 = CmdQueueReqDescSetRawPacketReceiveMetaChunk1::new(0);
         let c0 = CmdQueueReqDescSetRawPacketReceiveMetaChunk0::new(0);
 

@@ -9,6 +9,7 @@ use crate::{
     mem::page::ContiguousPages,
     net::config::NetworkConfig,
     ringbuf::{DescDeserialize, DescRingBuffer},
+    types::VirtAddr,
 };
 
 /// Command queue for submitting commands to the device
@@ -100,7 +101,7 @@ impl CmdRespQueue {
 /// Memory Translation Table entry
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct MttUpdate {
-    pub(crate) mr_base_va: u64,
+    pub(crate) mr_base_va: VirtAddr,
     pub(crate) mr_length: u32,
     pub(crate) mr_key: u32,
     pub(crate) pd_handler: u32,
@@ -110,7 +111,7 @@ pub(crate) struct MttUpdate {
 
 impl MttUpdate {
     pub(crate) fn new(
-        mr_base_va: u64,
+        mr_base_va: VirtAddr,
         mr_length: u32,
         mr_key: u32,
         pd_handler: u32,
@@ -130,13 +131,13 @@ impl MttUpdate {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PgtUpdate {
-    pub(crate) dma_addr: u64,
+    pub(crate) dma_addr: crate::types::PhysAddr,
     pub(crate) pgt_offset: u32,
     pub(crate) zero_based_entry_count: u32,
 }
 
 impl PgtUpdate {
-    pub(crate) fn new(dma_addr: u64, pgt_offset: u32, zero_based_entry_count: u32) -> Self {
+    pub(crate) fn new(dma_addr: crate::types::PhysAddr, pgt_offset: u32, zero_based_entry_count: u32) -> Self {
         Self {
             dma_addr,
             pgt_offset,
@@ -169,12 +170,12 @@ pub(crate) struct RecvBuffer {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RecvBufferMeta {
     /// Physical address of the receive buffer
-    pub(crate) phys_addr: u64,
+    pub(crate) phys_addr: crate::types::PhysAddr,
 }
 
 impl RecvBufferMeta {
     /// Creates a new `RecvBufferMeta`
-    pub(crate) fn new(phys_addr: u64) -> Self {
+    pub(crate) fn new(phys_addr: crate::types::PhysAddr) -> Self {
         Self { phys_addr }
     }
 }

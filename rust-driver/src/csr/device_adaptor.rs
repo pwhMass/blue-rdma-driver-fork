@@ -99,9 +99,8 @@ impl<Dev: DeviceAdaptor, Spec: RingSpec> Ring<Dev, Spec> {
     }
 
     /// Write the base physical address of the ring buffer (64-bit)
-    pub(crate) fn write_base_addr(&self, phys_addr: u64) -> io::Result<()> {
-        let lo = (phys_addr & 0xFFFF_FFFF) as u32;
-        let hi = (phys_addr >> 32) as u32;
+    pub(crate) fn write_base_addr(&self, phys_addr: crate::types::PhysAddr) -> io::Result<()> {
+        let (lo, hi) = phys_addr.split();
         self.dev
             .write_csr(self.spec.csr_base() + RING_OFFSET_BASE_LOW, lo)?;
         self.dev

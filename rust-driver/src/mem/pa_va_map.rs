@@ -12,28 +12,30 @@
 use core::panic;
 use std::collections::BTreeMap;
 
+use crate::types::{PhysAddr, VirtAddr};
+
 /// A range of memory addresses with its corresponding mapping
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AddressRange {
     /// Starting physical address
-    pa_start: u64,
+    pa_start: PhysAddr,
     /// Ending physical address (exclusive)
-    pa_end: u64,
+    pa_end: PhysAddr,
     /// Starting virtual address
-    va_start: u64,
+    va_start: VirtAddr,
 }
 
 impl AddressRange {
     /// Check if a physical address falls within this range
-    fn contains(&self, pa: u64) -> bool {
+    fn contains(&self, pa: PhysAddr) -> bool {
         pa >= self.pa_start && pa < self.pa_end
     }
 
     /// Convert a physical address to virtual address within this range
-    fn pa_to_va(&self, pa: u64) -> Option<u64> {
+    fn pa_to_va(&self, pa: PhysAddr) -> Option<VirtAddr> {
         if self.contains(pa) {
-            let offset = pa - self.pa_start;
-            Some(self.va_start + offset)
+            let offset = pa.as_u64() - self.pa_start.as_u64();
+            Some(VirtAddr::new(self.va_start.as_u64() + offset))
         } else {
             None
         }
@@ -46,11 +48,11 @@ impl AddressRange {
     /// `Some((va, remaining_len))` where:
     /// - `va`: Virtual address corresponding to the PA
     /// - `remaining_len`: Bytes remaining from this VA to the end of the range
-    fn pa_to_va_with_len(&self, pa: u64) -> Option<(u64, usize)> {
+    fn pa_to_va_with_len(&self, pa: PhysAddr) -> Option<(VirtAddr, usize)> {
         if self.contains(pa) {
-            let offset = pa - self.pa_start;
-            let va = self.va_start + offset;
-            let remaining_len = (self.pa_end - pa) as usize;
+            let offset = pa.as_u64() - self.pa_start.as_u64();
+            let va = VirtAddr::new(self.va_start.as_u64() + offset);
+            let remaining_len = (self.pa_end.as_u64() - pa.as_u64()) as usize;
             Some((va, remaining_len))
         } else {
             None
@@ -64,10 +66,10 @@ impl AddressRange {
 pub(crate) struct PaVaMap {
     /// Mapping from PA ranges to VA ranges
     /// Key: PA start address, Value: AddressRange
-    ranges: BTreeMap<u64, AddressRange>,
+    ranges: BTreeMap<PhysAddr, AddressRange>,
     /// Reverse mapping from VA to PA for fast VA→PA lookups
     /// Key: VA start address, Value: PA start address
-    va_to_pa: BTreeMap<u64, u64>,
+    va_to_pa: BTreeMap<VirtAddr, PhysAddr>,
 }
 
 impl PaVaMap {
@@ -90,11 +92,10 @@ impl PaVaMap {
     /// # Panics
     ///
     /// Panics if the region overlaps with an existing mapping
-    pub(crate) fn insert(&mut self, pa: u64, va: u64, size: usize) {
-
+    pub(crate) fn insert(&mut self, pa: PhysAddr, va: VirtAddr, size: usize) {
         let range = AddressRange {
             pa_start: pa,
-            pa_end: pa + size as u64,
+            pa_end: PhysAddr::new(pa.as_u64() + size as u64),
             va_start: va,
         };
 
@@ -103,7 +104,7 @@ impl PaVaMap {
             if (range.pa_start < existing_range.pa_end && range.pa_end > existing_range.pa_start) {
                 panic!(
                     "PA range overlap detected: new [{:#x}, {:#x}) conflicts with existing [{:#x}, {:#x})",
-                    range.pa_start, range.pa_end, existing_range.pa_start, existing_range.pa_end
+                    range.pa_start.as_u64(), range.pa_end.as_u64(), existing_range.pa_start.as_u64(), existing_range.pa_end.as_u64()
                 );
             }
         }
@@ -115,10 +116,10 @@ impl PaVaMap {
 
         log::debug!(
             "PA_VA_MAP: Inserted mapping PA [{:#x}, {:#x}) -> VA [{:#x}, {:#x})",
-            pa,
-            pa + size as u64,
-            va,
-            va + size as u64
+            pa.as_u64(),
+            pa.as_u64() + size as u64,
+            va.as_u64(),
+            va.as_u64() + size as u64
         );
     }
 
@@ -135,16 +136,16 @@ impl PaVaMap {
     /// - `remaining_len`: Bytes remaining from this VA to the end of the mapped range
     ///
     /// Returns `None` if the PA is not found in any mapped range
-    pub(crate) fn lookup(&self, pa: u64) -> Option<(u64, usize)> {
+    pub(crate) fn lookup(&self, pa: PhysAddr) -> Option<(VirtAddr, usize)> {
         // Use BTreeMap's range query to efficiently find the range
         // We look for the largest key that is <= pa
         for (_, range) in self.ranges.range(..=pa).rev() {
-            if let Some((va, remaining_len)) = range.pa_to_va_with_len(pa) {
-                return Some((va, remaining_len));
+            if let Some(result) = range.pa_to_va_with_len(pa) {
+                return Some(result);
             }
         }
 
-        log::warn!("PA_VA_MAP: Failed to lookup PA {:#x}", pa);
+        log::warn!("PA_VA_MAP: Failed to lookup PA {:#x}", pa.as_u64());
         None
     }
 
@@ -157,11 +158,11 @@ impl PaVaMap {
     /// # Returns
     ///
     /// The corresponding physical address start, or `None` if not found
-    pub(crate) fn lookup_by_va(&self, va: u64) -> Option<u64> {
+    pub(crate) fn lookup_by_va(&self, va: VirtAddr) -> Option<PhysAddr> {
         match self.va_to_pa.get(&va) {
             Some(&pa) => Some(pa),
             None => {
-                log::warn!("PA_VA_MAP: Failed to lookup VA {:#x}", va);
+                log::warn!("PA_VA_MAP: Failed to lookup VA {:#x}", va.as_u64());
                 None
             }
         }
@@ -172,7 +173,7 @@ impl PaVaMap {
     /// # Arguments
     ///
     /// * `pa` - Physical address start of the region to remove
-    pub(crate) fn remove(&mut self, pa: u64) {
+    pub(crate) fn remove(&mut self, pa: PhysAddr) {
         if let Some(range) = self.ranges.remove(&pa) {
             let va = range.va_start;
 
@@ -181,15 +182,15 @@ impl PaVaMap {
 
             log::debug!(
                 "PA_VA_MAP: Removed mapping PA [{:#x}, {:#x}) -> VA [{:#x}, {:#x})",
-                range.pa_start,
-                range.pa_end,
-                range.va_start,
-                range.va_start + (range.pa_end - range.pa_start)
+                range.pa_start.as_u64(),
+                range.pa_end.as_u64(),
+                range.va_start.as_u64(),
+                range.va_start.as_u64() + (range.pa_end.as_u64() - range.pa_start.as_u64())
             );
         } else {
             panic!(
                 "PA_VA_MAP: Attempted to remove non-existent mapping at PA {:#x}",
-                pa
+                pa.as_u64()
             );
         }
     }
@@ -201,26 +202,26 @@ impl PaVaMap {
     /// * `va` - Virtual address start of the region to remove
     ///
     /// This is useful for unpinning operations where the VA is known but PA needs to be looked up.
-    pub(crate) fn remove_by_va(&mut self, va: u64) {
+    pub(crate) fn remove_by_va(&mut self, va: VirtAddr) {
         // First lookup PA from VA
         if let Some(pa) = self.va_to_pa.remove(&va) {
             // Remove from main ranges map
             if let Some(range) = self.ranges.remove(&pa) {
                 log::debug!(
                     "PA_VA_MAP: Removed mapping VA [{:#x}, {:#x}) -> PA [{:#x}, {:#x})",
-                    range.va_start,
-                    range.va_start + (range.pa_end - range.pa_start),
-                    range.pa_start,
-                    range.pa_end
+                    range.va_start.as_u64(),
+                    range.va_start.as_u64() + (range.pa_end.as_u64() - range.pa_start.as_u64()),
+                    range.pa_start.as_u64(),
+                    range.pa_end.as_u64()
                 );
             } else {
                 panic!("PA_VA_MAP: Inconsistent state - VA {:#x} mapped to PA {:#x} but PA mapping not found",
-                    va, pa);
+                    va.as_u64(), pa.as_u64());
             }
         } else {
             panic!(
                 "PA_VA_MAP: Attempted to remove non-existent mapping at VA {:#x}",
-                va
+                va.as_u64()
             );
         }
     }
@@ -252,19 +253,19 @@ mod tests {
         let mut map = PaVaMap::new();
 
         // Insert a mapping: PA [0x1000, 0x2000) -> VA [0x7000, 0x8000)
-        map.insert(0x1000, 0x7000, 0x1000);
+        map.insert(PhysAddr::new(0x1000), VirtAddr::new(0x7000), 0x1000);
 
         // Lookup addresses within the range
         // At PA 0x1000: VA 0x7000, remaining = 0x2000 - 0x1000 = 0x1000 (4096 bytes)
-        assert_eq!(map.lookup(0x1000), Some((0x7000, 0x1000)));
+        assert_eq!(map.lookup(PhysAddr::new(0x1000)), Some((VirtAddr::new(0x7000), 0x1000)));
         // At PA 0x1500: VA 0x7500, remaining = 0x2000 - 0x1500 = 0xb00 (2816 bytes)
-        assert_eq!(map.lookup(0x1500), Some((0x7500, 0xb00)));
+        assert_eq!(map.lookup(PhysAddr::new(0x1500)), Some((VirtAddr::new(0x7500), 0xb00)));
         // At PA 0x1fff: VA 0x7fff, remaining = 0x2000 - 0x1fff = 1 byte
-        assert_eq!(map.lookup(0x1fff), Some((0x7fff, 1)));
+        assert_eq!(map.lookup(PhysAddr::new(0x1fff)), Some((VirtAddr::new(0x7fff), 1)));
 
         // Lookup addresses outside the range
-        assert_eq!(map.lookup(0x0fff), None);
-        assert_eq!(map.lookup(0x2000), None);
+        assert_eq!(map.lookup(PhysAddr::new(0x0fff)), None);
+        assert_eq!(map.lookup(PhysAddr::new(0x2000)), None);
     }
 
     #[test]
@@ -273,41 +274,41 @@ mod tests {
 
         // Insert multiple non-overlapping ranges
         // Range 1: PA [0x1000, 0x2000) -> VA [0x7000, 0x8000)
-        map.insert(0x1000, 0x7000, 0x1000);
+        map.insert(PhysAddr::new(0x1000), VirtAddr::new(0x7000), 0x1000);
         // Range 2: PA [0x3000, 0x5000) -> VA [0x8000, 0xa000)
-        map.insert(0x3000, 0x8000, 0x2000);
+        map.insert(PhysAddr::new(0x3000), VirtAddr::new(0x8000), 0x2000);
         // Range 3: PA [0x6000, 0x7000) -> VA [0xa000, 0xb000)
-        map.insert(0x6000, 0xa000, 0x1000);
+        map.insert(PhysAddr::new(0x6000), VirtAddr::new(0xa000), 0x1000);
 
         // Lookup in first range
         // At PA 0x1500: remaining = 0x2000 - 0x1500 = 0xb00
-        assert_eq!(map.lookup(0x1500), Some((0x7500, 0xb00)));
+        assert_eq!(map.lookup(PhysAddr::new(0x1500)), Some((VirtAddr::new(0x7500), 0xb00)));
 
         // Lookup in second range
         // At PA 0x3500: remaining = 0x5000 - 0x3500 = 0x1b00
-        assert_eq!(map.lookup(0x3500), Some((0x8500, 0x1b00)));
+        assert_eq!(map.lookup(PhysAddr::new(0x3500)), Some((VirtAddr::new(0x8500), 0x1b00)));
         // At PA 0x4fff: remaining = 0x5000 - 0x4fff = 1
-        assert_eq!(map.lookup(0x4fff), Some((0x9fff, 1)));
+        assert_eq!(map.lookup(PhysAddr::new(0x4fff)), Some((VirtAddr::new(0x9fff), 1)));
 
         // Lookup in third range
         // At PA 0x6500: remaining = 0x7000 - 0x6500 = 0xb00
-        assert_eq!(map.lookup(0x6500), Some((0xa500, 0xb00)));
+        assert_eq!(map.lookup(PhysAddr::new(0x6500)), Some((VirtAddr::new(0xa500), 0xb00)));
 
         // Lookup in gaps
-        assert_eq!(map.lookup(0x2000), None);
-        assert_eq!(map.lookup(0x5000), None);
-        assert_eq!(map.lookup(0x7000), None);
+        assert_eq!(map.lookup(PhysAddr::new(0x2000)), None);
+        assert_eq!(map.lookup(PhysAddr::new(0x5000)), None);
+        assert_eq!(map.lookup(PhysAddr::new(0x7000)), None);
     }
 
     #[test]
     fn test_remove() {
         let mut map = PaVaMap::new();
 
-        map.insert(0x1000, 0x7000, 0x1000);
-        assert_eq!(map.lookup(0x1500), Some((0x7500, 0xb00)));
+        map.insert(PhysAddr::new(0x1000), VirtAddr::new(0x7000), 0x1000);
+        assert_eq!(map.lookup(PhysAddr::new(0x1500)), Some((VirtAddr::new(0x7500), 0xb00)));
 
-        map.remove(0x1000);
-        assert_eq!(map.lookup(0x1500), None);
+        map.remove(PhysAddr::new(0x1000));
+        assert_eq!(map.lookup(PhysAddr::new(0x1500)), None);
     }
 
     #[test]
@@ -316,10 +317,10 @@ mod tests {
         let mut map = PaVaMap::new();
 
         // Insert first range
-        map.insert(0x1000, 0x7000, 0x2000);
+        map.insert(PhysAddr::new(0x1000), VirtAddr::new(0x7000), 0x2000);
 
         // Try to insert overlapping range (should panic)
-        map.insert(0x1500, 0x8000, 0x1000);
+        map.insert(PhysAddr::new(0x1500), VirtAddr::new(0x8000), 0x1000);
     }
 
     #[test]
@@ -327,14 +328,14 @@ mod tests {
         let mut map = PaVaMap::new();
 
         // Insert adjacent (non-overlapping) ranges
-        map.insert(0x1000, 0x7000, 0x1000);
-        map.insert(0x2000, 0x8000, 0x1000);
+        map.insert(PhysAddr::new(0x1000), VirtAddr::new(0x7000), 0x1000);
+        map.insert(PhysAddr::new(0x2000), VirtAddr::new(0x8000), 0x1000);
 
         // Both ranges should be accessible
         // At PA 0x1fff: last byte of first range, remaining = 1
-        assert_eq!(map.lookup(0x1fff), Some((0x7fff, 1)));
+        assert_eq!(map.lookup(PhysAddr::new(0x1fff)), Some((VirtAddr::new(0x7fff), 1)));
         // At PA 0x2000: first byte of second range, remaining = 0x1000
-        assert_eq!(map.lookup(0x2000), Some((0x8000, 0x1000)));
+        assert_eq!(map.lookup(PhysAddr::new(0x2000)), Some((VirtAddr::new(0x8000), 0x1000)));
     }
 
     #[test]
@@ -344,17 +345,17 @@ mod tests {
         assert!(map.is_empty());
         assert_eq!(map.len(), 0);
 
-        map.insert(0x1000, 0x7000, 0x1000);
+        map.insert(PhysAddr::new(0x1000), VirtAddr::new(0x7000), 0x1000);
         assert!(!map.is_empty());
         assert_eq!(map.len(), 1);
 
-        map.insert(0x2000, 0x8000, 0x1000);
+        map.insert(PhysAddr::new(0x2000), VirtAddr::new(0x8000), 0x1000);
         assert_eq!(map.len(), 2);
 
-        map.remove(0x1000);
+        map.remove(PhysAddr::new(0x1000));
         assert_eq!(map.len(), 1);
 
-        map.remove(0x2000);
+        map.remove(PhysAddr::new(0x2000));
         assert!(map.is_empty());
     }
 
@@ -363,33 +364,33 @@ mod tests {
         let mut map = PaVaMap::new();
 
         // Insert mappings
-        map.insert(0x1000, 0x7000, 0x1000);
-        map.insert(0x3000, 0x8000, 0x2000);
+        map.insert(PhysAddr::new(0x1000), VirtAddr::new(0x7000), 0x1000);
+        map.insert(PhysAddr::new(0x3000), VirtAddr::new(0x8000), 0x2000);
 
         // Test VA → PA lookups (exact matches only)
-        assert_eq!(map.lookup_by_va(0x7000), Some(0x1000));
-        assert_eq!(map.lookup_by_va(0x8000), Some(0x3000));
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x7000)), Some(PhysAddr::new(0x1000)));
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x8000)), Some(PhysAddr::new(0x3000)));
 
         // Non-existent VA
-        assert_eq!(map.lookup_by_va(0x9000), None);
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x9000)), None);
 
         // Offset addresses should not match (exact match only)
-        assert_eq!(map.lookup_by_va(0x7500), None);
-        assert_eq!(map.lookup_by_va(0x8500), None);
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x7500)), None);
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x8500)), None);
     }
 
     #[test]
     fn test_bidirectional_lookup() {
         let mut map = PaVaMap::new();
 
-        map.insert(0x1000, 0x7000, 0x1000);
+        map.insert(PhysAddr::new(0x1000), VirtAddr::new(0x7000), 0x1000);
 
         // Test PA → VA (with remaining length)
-        assert_eq!(map.lookup(0x1000), Some((0x7000, 0x1000)));
-        assert_eq!(map.lookup(0x1500), Some((0x7500, 0xb00)));
+        assert_eq!(map.lookup(PhysAddr::new(0x1000)), Some((VirtAddr::new(0x7000), 0x1000)));
+        assert_eq!(map.lookup(PhysAddr::new(0x1500)), Some((VirtAddr::new(0x7500), 0xb00)));
 
         // Test VA → PA
-        assert_eq!(map.lookup_by_va(0x7000), Some(0x1000));
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x7000)), Some(PhysAddr::new(0x1000)));
     }
 
     #[test]
@@ -397,18 +398,18 @@ mod tests {
         let mut map = PaVaMap::new();
 
         // Insert mapping
-        map.insert(0x1000, 0x7000, 0x1000);
+        map.insert(PhysAddr::new(0x1000), VirtAddr::new(0x7000), 0x1000);
 
         // Verify it exists
-        assert_eq!(map.lookup_by_va(0x7000), Some(0x1000));
-        assert_eq!(map.lookup(0x1000), Some((0x7000, 0x1000)));
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x7000)), Some(PhysAddr::new(0x1000)));
+        assert_eq!(map.lookup(PhysAddr::new(0x1000)), Some((VirtAddr::new(0x7000), 0x1000)));
 
         // Remove by VA
-        map.remove_by_va(0x7000);
+        map.remove_by_va(VirtAddr::new(0x7000));
 
         // Verify both directions are removed
-        assert_eq!(map.lookup_by_va(0x7000), None);
-        assert_eq!(map.lookup(0x1000), None);
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x7000)), None);
+        assert_eq!(map.lookup(PhysAddr::new(0x1000)), None);
         assert!(map.is_empty());
     }
 
@@ -417,18 +418,18 @@ mod tests {
         let mut map = PaVaMap::new();
 
         // Insert mapping
-        map.insert(0x1000, 0x7000, 0x1000);
+        map.insert(PhysAddr::new(0x1000), VirtAddr::new(0x7000), 0x1000);
 
         // Verify it exists
-        assert_eq!(map.lookup_by_va(0x7000), Some(0x1000));
-        assert_eq!(map.lookup(0x1000), Some((0x7000, 0x1000)));
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x7000)), Some(PhysAddr::new(0x1000)));
+        assert_eq!(map.lookup(PhysAddr::new(0x1000)), Some((VirtAddr::new(0x7000), 0x1000)));
 
         // Remove by PA (original method)
-        map.remove(0x1000);
+        map.remove(PhysAddr::new(0x1000));
 
         // Verify both directions are removed
-        assert_eq!(map.lookup_by_va(0x7000), None);
-        assert_eq!(map.lookup(0x1000), None);
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x7000)), None);
+        assert_eq!(map.lookup(PhysAddr::new(0x1000)), None);
         assert!(map.is_empty());
     }
 
@@ -437,27 +438,27 @@ mod tests {
         let mut map = PaVaMap::new();
 
         // Insert multiple ranges
-        map.insert(0x1000, 0x7000, 0x1000);
-        map.insert(0x3000, 0x8000, 0x2000);
-        map.insert(0x6000, 0xa000, 0x1000);
+        map.insert(PhysAddr::new(0x1000), VirtAddr::new(0x7000), 0x1000);
+        map.insert(PhysAddr::new(0x3000), VirtAddr::new(0x8000), 0x2000);
+        map.insert(PhysAddr::new(0x6000), VirtAddr::new(0xa000), 0x1000);
 
         // Test all VA → PA lookups
-        assert_eq!(map.lookup_by_va(0x7000), Some(0x1000));
-        assert_eq!(map.lookup_by_va(0x8000), Some(0x3000));
-        assert_eq!(map.lookup_by_va(0xa000), Some(0x6000));
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x7000)), Some(PhysAddr::new(0x1000)));
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x8000)), Some(PhysAddr::new(0x3000)));
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0xa000)), Some(PhysAddr::new(0x6000)));
 
         // Test all PA → VA lookups (with remaining length)
-        assert_eq!(map.lookup(0x1000), Some((0x7000, 0x1000)));
-        assert_eq!(map.lookup(0x3000), Some((0x8000, 0x2000)));
-        assert_eq!(map.lookup(0x6000), Some((0xa000, 0x1000)));
+        assert_eq!(map.lookup(PhysAddr::new(0x1000)), Some((VirtAddr::new(0x7000), 0x1000)));
+        assert_eq!(map.lookup(PhysAddr::new(0x3000)), Some((VirtAddr::new(0x8000), 0x2000)));
+        assert_eq!(map.lookup(PhysAddr::new(0x6000)), Some((VirtAddr::new(0xa000), 0x1000)));
 
         // Remove middle range by VA
-        map.remove_by_va(0x8000);
+        map.remove_by_va(VirtAddr::new(0x8000));
 
         // Verify only that range is removed
-        assert_eq!(map.lookup_by_va(0x7000), Some(0x1000));
-        assert_eq!(map.lookup_by_va(0x8000), None);
-        assert_eq!(map.lookup_by_va(0xa000), Some(0x6000));
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x7000)), Some(PhysAddr::new(0x1000)));
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x8000)), None);
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0xa000)), Some(PhysAddr::new(0x6000)));
         assert_eq!(map.len(), 2);
     }
 
@@ -466,8 +467,8 @@ mod tests {
         let mut map = PaVaMap::new();
 
         // Insert multiple mappings
-        map.insert(0x1000, 0x7000, 0x1000);
-        map.insert(0x2000, 0x8000, 0x1000);
+        map.insert(PhysAddr::new(0x1000), VirtAddr::new(0x7000), 0x1000);
+        map.insert(PhysAddr::new(0x2000), VirtAddr::new(0x8000), 0x1000);
 
         assert_eq!(map.len(), 2);
 
@@ -476,10 +477,10 @@ mod tests {
 
         // Verify both indices are empty
         assert!(map.is_empty());
-        assert_eq!(map.lookup_by_va(0x7000), None);
-        assert_eq!(map.lookup_by_va(0x8000), None);
-        assert_eq!(map.lookup(0x1000), None);
-        assert_eq!(map.lookup(0x2000), None);
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x7000)), None);
+        assert_eq!(map.lookup_by_va(VirtAddr::new(0x8000)), None);
+        assert_eq!(map.lookup(PhysAddr::new(0x1000)), None);
+        assert_eq!(map.lookup(PhysAddr::new(0x2000)), None);
     }
 
     #[test]
@@ -487,20 +488,20 @@ mod tests {
         let mut map = PaVaMap::new();
 
         // Insert a 4KB range: PA [0x1000, 0x2000) -> VA [0x7000, 0x8000)
-        map.insert(0x1000, 0x7000, 0x1000);
+        map.insert(PhysAddr::new(0x1000), VirtAddr::new(0x7000), 0x1000);
 
         // Test remaining length at different offsets
-        assert_eq!(map.lookup(0x1000), Some((0x7000, 0x1000))); // 4096 bytes remaining
-        assert_eq!(map.lookup(0x1001), Some((0x7001, 0xfff))); // 4095 bytes remaining
-        assert_eq!(map.lookup(0x1800), Some((0x7800, 0x800))); // 2048 bytes remaining
-        assert_eq!(map.lookup(0x1fff), Some((0x7fff, 1))); // 1 byte remaining
+        assert_eq!(map.lookup(PhysAddr::new(0x1000)), Some((VirtAddr::new(0x7000), 0x1000))); // 4096 bytes remaining
+        assert_eq!(map.lookup(PhysAddr::new(0x1001)), Some((VirtAddr::new(0x7001), 0xfff))); // 4095 bytes remaining
+        assert_eq!(map.lookup(PhysAddr::new(0x1800)), Some((VirtAddr::new(0x7800), 0x800))); // 2048 bytes remaining
+        assert_eq!(map.lookup(PhysAddr::new(0x1fff)), Some((VirtAddr::new(0x7fff), 1))); // 1 byte remaining
 
         // Insert a larger range to test: PA [0x10000, 0x20000) -> VA [0x50000, 0x60000)
-        map.insert(0x10000, 0x50000, 0x10000);
+        map.insert(PhysAddr::new(0x10000), VirtAddr::new(0x50000), 0x10000);
 
         // Test various positions in the 64KB range
-        assert_eq!(map.lookup(0x10000), Some((0x50000, 0x10000))); // 65536 bytes
-        assert_eq!(map.lookup(0x18000), Some((0x58000, 0x8000))); // 32768 bytes
-        assert_eq!(map.lookup(0x1ffff), Some((0x5ffff, 1))); // 1 byte
+        assert_eq!(map.lookup(PhysAddr::new(0x10000)), Some((VirtAddr::new(0x50000), 0x10000))); // 65536 bytes
+        assert_eq!(map.lookup(PhysAddr::new(0x18000)), Some((VirtAddr::new(0x58000), 0x8000))); // 32768 bytes
+        assert_eq!(map.lookup(PhysAddr::new(0x1ffff)), Some((VirtAddr::new(0x5ffff), 1))); // 1 byte
     }
 }

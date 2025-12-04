@@ -26,10 +26,15 @@ pub fn virt_to_phy_bench_wrapper<Vas>(virt_addrs: Vas) -> io::Result<Vec<Option<
 where
     Vas: IntoIterator<Item = *const u8>,
 {
+    use crate::types::VirtAddr;
     let resolver = PhysAddrResolverLinuxX86;
     virt_addrs
         .into_iter()
-        .map(|va| resolver.virt_to_phys(va as u64))
+        .map(|va| {
+            resolver
+                .virt_to_phys(VirtAddr::from_ptr(va))
+                .map(|opt| opt.map(|pa| pa.as_u64()))
+        })
         .collect()
 }
 
@@ -38,8 +43,11 @@ pub fn virt_to_phy_bench_range_wrapper(
     start_addr: *const u8,
     num_pages: usize,
 ) -> io::Result<Vec<Option<u64>>> {
+    use crate::types::VirtAddr;
     let resolver = PhysAddrResolverLinuxX86;
-    resolver.virt_to_phys_range(start_addr as u64, num_pages)
+    resolver
+        .virt_to_phys_range(VirtAddr::from_ptr(start_addr), num_pages)
+        .map(|vec| vec.into_iter().map(|opt| opt.map(|pa| pa.as_u64())).collect())
 }
 
 #[derive(Debug, Clone, Copy)]

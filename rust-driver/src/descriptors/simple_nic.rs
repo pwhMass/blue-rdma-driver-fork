@@ -3,6 +3,7 @@ use bilge::prelude::*;
 use crate::{
     impl_desc_serde,
     ringbuf::{DescDeserialize, DescSerialize},
+    types::PhysAddr,
 };
 
 use super::RingBufDescCommonHead;
@@ -43,10 +44,10 @@ pub(crate) struct SimpleNicTxQueueDesc {
 }
 
 impl SimpleNicTxQueueDesc {
-    pub(crate) fn new(addr: u64, len: u32) -> Self {
+    pub(crate) fn new(addr: PhysAddr, len: u32) -> Self {
         let common_header = RingBufDescCommonHead::new_simple_nic_desc();
         let c3 = SimpleNicTxQueueDescChunk3::new(len, 0, common_header);
-        let c2 = SimpleNicTxQueueDescChunk2::new(addr);
+        let c2 = SimpleNicTxQueueDescChunk2::new(addr.as_u64());
         let c1 = SimpleNicTxQueueDescChunk1::new(0);
         let c0 = SimpleNicTxQueueDescChunk0::new(0);
         Self { c0, c1, c2, c3 }

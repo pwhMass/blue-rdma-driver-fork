@@ -107,17 +107,21 @@ pub(super) fn get_device(context: *mut ibverbs_sys::ibv_context) -> &'static mut
     let driver_ptr = unsafe { (*dev_ptr).driver };
     unsafe {
         #[cfg(feature = "hw")]
-        {
-            driver_ptr.cast::<HwDeviceCtx<PciHwDevice>>().as_mut()
-        }
+        return driver_ptr
+            .cast::<HwDeviceCtx<PciHwDevice>>()
+            .as_mut()
+            .unwrap_or_else(|| unreachable!("null device pointer"));
+
         #[cfg(feature = "sim")]
-        {
-            driver_ptr.cast::<HwDeviceCtx<EmulatedHwDevice>>().as_mut()
-        }
+        return driver_ptr
+            .cast::<HwDeviceCtx<EmulatedHwDevice>>()
+            .as_mut()
+            .unwrap_or_else(|| unreachable!("null device pointer"));
+
         #[cfg(feature = "mock")]
-        {
-            driver_ptr.cast::<MockDeviceCtx>().as_mut()
-        }
+        return driver_ptr
+            .cast::<MockDeviceCtx>()
+            .as_mut()
+            .unwrap_or_else(|| unreachable!("null device pointer"));
     }
-    .unwrap_or_else(|| unreachable!("null device pointer"))
 }

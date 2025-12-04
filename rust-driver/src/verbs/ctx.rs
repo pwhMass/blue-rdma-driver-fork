@@ -19,6 +19,7 @@ use crate::{
         get_num_page, page::PageAllocator, pin_pages, virt_to_phy::AddressResolver, DmaBuf,
         DmaBufAllocator, MemoryPinner, PageWithPhysAddr, UmemHandler, PAGE_SIZE,
     },
+    types::{PhysAddr, VirtAddr},
     net::{config::NetworkConfig, reader::NetConfigReader, recv_chan::{
         post_recv_channel, PostRecvTx, PostRecvTxTable, RecvWorker, RecvWrQueueTable, TcpChannel,
     }, simple_nic::SimpleNicController},
@@ -268,14 +269,15 @@ where
         }
 
         let umem_handler = self.device.new_umem_handler();
-        umem_handler.pin_pages(addr, length)?;
+        let virt_addr = VirtAddr::new(addr);
+        umem_handler.pin_pages(virt_addr, length)?;
         let num_pages = get_num_page(addr, length);
         debug!("generate page table entries: addr=0x{addr:x}, length=0x{length:x} --> num_pages={num_pages}");
         let (mr_key, pgt_entry) = self.mtt.register(num_pages)?;
         let length_u32 = u32::try_from(length)
             .map_err(|_err| RdmaError::InvalidInput("Length too large".into()))?;
         let phys_addrs = umem_handler
-            .virt_to_phys_range(addr, num_pages)?
+            .virt_to_phys_range(virt_addr, num_pages)?
             .into_iter()
             .collect::<Option<Vec<_>>>()
             .ok_or(RdmaError::MemoryError("Physical address not found".into()))?;
@@ -283,7 +285,7 @@ where
             // .into_iter();
         let buf = &mut self.mtt_buffer.buf;
         let base_index = pgt_entry.index;
-        let mtt_update = MttUpdate::new(addr, length_u32, mr_key, pd_handle, access, base_index);
+        let mtt_update = MttUpdate::new(VirtAddr::new(addr), length_u32, mr_key, pd_handle, access, base_index);
         // TODO: makes updates atomic
         self.cmd_controller.update_mtt(mtt_update);
         let mut phys_addrs = phys_addrs.into_iter();
@@ -291,14 +293,14 @@ where
             let bytes: Vec<u8> = phys_addrs
                 .by_ref()
                 .take(count as usize)
-                .flat_map(u64::to_ne_bytes)
+                .flat_map(|pa| pa.as_u64().to_ne_bytes())
                 .collect();
             buf.copy_from(0, &bytes);
             let pgt_update = PgtUpdate::new(self.mtt_buffer.phys_addr, index, count - 1);
             debug!("new pgt update request: {pgt_update:?}");
             let mut va_start_for_debug = addr & (!(PAGE_SIZE as u64));
             for phy_addr in &phys_addrs_for_debug {
-                debug!("pgt map va -> pa: 0x{va_start_for_debug:x} -> 0x{phy_addr:x}");
+                debug!("pgt map va -> pa: 0x{va_start_for_debug:x} -> 0x{:x}", phy_addr.as_u64());
                 va_start_for_debug += (PAGE_SIZE as u64);
             }
             self.cmd_controller.update_pgt(pgt_update);

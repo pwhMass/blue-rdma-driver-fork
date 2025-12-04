@@ -181,6 +181,8 @@ mod memory_proxy_simple;
 pub mod net;
 pub(crate) mod rdma_utils;
 mod ringbuf;
+/// Type-safe abstractions
+mod types;
 mod verbs;
 mod workers;
 

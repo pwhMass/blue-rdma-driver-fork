@@ -20,6 +20,7 @@ use crate::{
         DmaBuf, PageWithPhysAddr,
     },
     ringbuf::DescRingBuffer,
+    types::PhysAddr,
 };
 
 use super::{
@@ -77,7 +78,7 @@ pub(crate) struct FrameTxQueue<Dev: DeviceAdaptor> {
     /// A contiguous memory buffer used for sending data
     buf: MmapMut,
     /// Base physical address of the buffer
-    buf_base_phys_addr: u64,
+    buf_base_phys_addr: PhysAddr,
     /// Pointer to the next slot of the buffer
     buf_head: usize,
 }
@@ -87,7 +88,7 @@ impl<Dev: DeviceAdaptor> FrameTxQueue<Dev> {
     pub(crate) fn new(
         inner: SimpleNicTxQueue,
         buf: MmapMut,
-        buf_base_phys_addr: u64,
+        buf_base_phys_addr: PhysAddr,
         csr_ring: SimpleNicTxRing<Dev>,
     ) -> Self {
         Self {
@@ -108,11 +109,11 @@ impl<Dev: DeviceAdaptor> FrameTxQueue<Dev> {
     }
 
     #[allow(clippy::as_conversions)]
-    fn write_next(&mut self, data: &[u8]) -> Option<u64> {
+    fn write_next(&mut self, data: &[u8]) -> Option<PhysAddr> {
         if data.len() > FRAME_SLOT_SIZE {
             return None;
         }
-        let phys_addr = self.buf_base_phys_addr.wrapping_add(self.buf_head as u64);
+        let phys_addr = PhysAddr::new(self.buf_base_phys_addr.as_u64().wrapping_add(self.buf_head as u64));
         self.buf.copy_from(self.buf_head, data);
         self.buf_head = self
             .buf_head
@@ -203,10 +204,16 @@ impl<Tx: FrameTx + Send + 'static> TxWorker<Tx> {
     }
 
     /// Build the descriptor from the given buffer
+    ///
+    /// FIXME: This function appears to be unused dead code. If it is ever used,
+    /// it has a critical bug: it passes a virtual address where a physical address
+    /// is required for DMA. This will cause hardware DMA failures.
+    /// Proper fix requires VA->PA translation via address resolver.
     #[allow(clippy::as_conversions)] // convert *const u8 to u64 is safe
     fn build_desc(buf: &[u8]) -> Option<SimpleNicTxQueueDesc> {
         let len: u32 = buf.len().try_into().ok()?;
-        Some(SimpleNicTxQueueDesc::new(buf.as_ptr() as u64, len))
+        // BUG: This passes a virtual address but hardware needs physical address!
+        Some(SimpleNicTxQueueDesc::new(PhysAddr::new(buf.as_ptr() as u64), len))
     }
 
     /// Process a single frame by receiving from device and pushing to tx queue

@@ -25,6 +25,7 @@ use std::{
 use crate::{
     csr::DeviceAdaptor,
     error::{RdmaError, Result},
+    types::{PhysAddr, VirtAddr},
     rdma_utils::{
         pd::PdTable,
         qp::QpTable,
@@ -89,7 +90,7 @@ impl DmaBufAllocator for MockDmaBufAllocator {
         }
 
         let mmap = MmapMut::new(ptr, usize::MAX);
-        Ok(DmaBuf::new(mmap, 0))
+        Ok(DmaBuf::new(mmap, PhysAddr::new(0)))
     }
 }
 
@@ -97,18 +98,18 @@ impl DmaBufAllocator for MockDmaBufAllocator {
 pub(crate) struct MockUmemHandler;
 
 impl MemoryPinner for MockUmemHandler {
-    fn pin_pages(&self, addr: u64, length: usize) -> io::Result<()> {
+    fn pin_pages(&self, _addr: VirtAddr, _length: usize) -> io::Result<()> {
         Ok(())
     }
 
-    fn unpin_pages(&self, addr: u64, length: usize) -> io::Result<()> {
+    fn unpin_pages(&self, _addr: VirtAddr, _length: usize) -> io::Result<()> {
         Ok(())
     }
 }
 
 impl AddressResolver for MockUmemHandler {
-    fn virt_to_phys(&self, virt_addr: u64) -> io::Result<Option<u64>> {
-        Ok(Some(0))
+    fn virt_to_phys(&self, _virt_addr: VirtAddr) -> io::Result<Option<PhysAddr>> {
+        Ok(Some(PhysAddr::new(0)))
     }
 }
 
@@ -164,7 +165,7 @@ impl VerbsOps for MockDeviceCtx {
         access: u8,
     ) -> crate::error::Result<u32> {
         let addr_resolver = PhysAddrResolverLinuxX86;
-        let pa = addr_resolver.virt_to_phys(addr).map_err(|e| {
+        let pa = addr_resolver.virt_to_phys(VirtAddr::new(addr)).map_err(|e| {
             RdmaError::MemoryError(format!("Failed to resolve physical address: {e}",))
         })?;
 

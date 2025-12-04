@@ -6,6 +6,7 @@ use crate::{
     descriptors::{SendQueueReqDescSeg0, SendQueueReqDescSeg1},
     rdma_utils::{psn::Psn, qp::convert_ibv_mtu_to_u16},
     ringbuf::{DescRingBuffer, DescSerialize},
+    types::{RemoteAddr, VirtAddr},
 };
 
 /// Injector
@@ -151,8 +152,8 @@ impl WrChunkBuilder<WithIbvParams> {
         pos: ChunkPos,
     ) -> WrChunkBuilder<WithChunkInfo> {
         self.inner.psn = psn;
-        self.inner.laddr = laddr;
-        self.inner.raddr = raddr;
+        self.inner.laddr = VirtAddr::new(laddr);
+        self.inner.raddr = RemoteAddr::new(raddr);
         self.inner.len = len;
         match pos {
             ChunkPos::First => self.inner.is_first = true,
@@ -202,12 +203,12 @@ pub(crate) struct WrChunk {
     pub(crate) dqp_ip: u32,
     pub(crate) pmtu: u8,
     pub(crate) flags: u8,
-    pub(crate) raddr: u64,
+    pub(crate) raddr: RemoteAddr,
     pub(crate) rkey: u32,
     pub(crate) total_len: u32,
     pub(crate) lkey: u32,
     pub(crate) imm: u32,
-    pub(crate) laddr: u64,
+    pub(crate) laddr: VirtAddr,
     pub(crate) len: u32,
     pub(crate) is_first: bool,
     pub(crate) is_last: bool,

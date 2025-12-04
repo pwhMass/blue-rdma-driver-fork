@@ -13,6 +13,8 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::fmt::Error;
 use std::io::BufRead;
+
+use crate::types::PhysAddr;
 use std::io::BufReader;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -245,13 +247,13 @@ impl SimpleMemoryProxyClient {
         );
 
         let pa_va_map = self.pa_va_map.read();
-        let (vir_addr, remain_len) = pa_va_map.lookup(req.address).unwrap();
+        let (vir_addr, remain_len) = pa_va_map.lookup(PhysAddr::new(req.address)).unwrap();
 
         assert!(
             remain_len >= req.length,
             "Not enough contiguous memory for read request"
         );
-        let vir_addr = vir_addr as *const u8;
+        let vir_addr = vir_addr.as_ptr::<u8>();
 
         let mut data = Vec::with_capacity(req.length);
 
@@ -284,14 +286,14 @@ impl SimpleMemoryProxyClient {
         );
 
         let pa_va_map = self.pa_va_map.read();
-        let (vir_addr, remain_len) = pa_va_map.lookup(req.address).unwrap();
+        let (vir_addr, remain_len) = pa_va_map.lookup(PhysAddr::new(req.address)).unwrap();
 
         assert!(
             remain_len >= req.length,
             "Not enough contiguous memory for read request"
         );
 
-        let vir_addr = vir_addr as *mut u8;
+        let vir_addr = vir_addr.as_mut_ptr::<u8>();
 
         for (i, byte) in req.data.unwrap().iter().enumerate() {
             unsafe {

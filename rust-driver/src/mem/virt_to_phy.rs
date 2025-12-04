@@ -5,6 +5,8 @@ use std::{
 
 use log::debug;
 
+use crate::types::{PhysAddr, VirtAddr};
+
 /// Size of the PFN (Page Frame Number) mask in bytes
 const PFN_MASK_SIZE: usize = 8;
 /// PFN are bits 0-54 (see pagemap.txt in Linux Documentation)
@@ -24,19 +26,19 @@ fn get_base_page_size() -> u64 {
 }
 
 pub(crate) trait AddressResolver {
-    /// Converts a list of virtual addresses to physical addresses
+    /// Converts a virtual address to a physical address
     ///
     /// # Returns
     ///
-    /// A vector of optional physical addresses. `None` indicates
+    /// An optional physical address. `None` indicates
     /// the page is not present in physical memory.
     ///
     /// # Errors
     ///
     /// Returns an IO error if address resolving fails.
-    fn virt_to_phys(&self, virt_addr: u64) -> io::Result<Option<u64>>;
+    fn virt_to_phys(&self, virt_addr: VirtAddr) -> io::Result<Option<PhysAddr>>;
 
-    /// Converts a list of virtual addresses to physical addresses
+    /// Converts a range of virtual addresses to physical addresses
     ///
     /// # Returns
     ///
@@ -49,11 +51,16 @@ pub(crate) trait AddressResolver {
     #[allow(clippy::as_conversions)]
     fn virt_to_phys_range(
         &self,
-        start_addr: u64,
+        start_addr: VirtAddr,
         num_pages: usize,
-    ) -> io::Result<Vec<Option<u64>>> {
+    ) -> io::Result<Vec<Option<PhysAddr>>> {
         (0..num_pages as u64)
-            .map(|x| self.virt_to_phys(start_addr.saturating_add(x * PAGE_SIZE)))
+            .map(|x| {
+                let addr = start_addr.offset(x * PAGE_SIZE).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "address overflow")
+                })?;
+                self.virt_to_phys(addr)
+            })
             .collect::<Result<_, _>>()
     }
 }
@@ -72,10 +79,11 @@ pub(crate) struct PhysAddrResolverLinuxX86;
     clippy::host_endian_bytes
 )]
 impl AddressResolver for PhysAddrResolverLinuxX86 {
-    fn virt_to_phys(&self, virt_addr: u64) -> io::Result<Option<u64>> {
+    fn virt_to_phys(&self, virt_addr: VirtAddr) -> io::Result<Option<PhysAddr>> {
+        let virt_addr_raw = virt_addr.as_u64();
         let base_page_size = get_base_page_size();
         let mut file = File::open("/proc/self/pagemap")?;
-        let virt_pfn = virt_addr / base_page_size;
+        let virt_pfn = virt_addr_raw / base_page_size;
         let offset = PFN_MASK_SIZE as u64 * virt_pfn;
         let mut buf = [0u8; PFN_MASK_SIZE];
 
@@ -86,8 +94,8 @@ impl AddressResolver for PhysAddrResolverLinuxX86 {
 
             if (entry >> PAGE_PRESENT_BIT) & 1 != 0 {
                 let phy_pfn = entry & PFN_MASK;
-                let phys_addr = phy_pfn * base_page_size + virt_addr % base_page_size;
-                return Ok(Some(phys_addr));
+                let phys_addr = phy_pfn * base_page_size + virt_addr_raw % base_page_size;
+                return Ok(Some(PhysAddr::new(phys_addr)));
             }
 
             Ok(None)
@@ -97,7 +105,7 @@ impl AddressResolver for PhysAddrResolverLinuxX86 {
             return Ok(pa);
         }
 
-        if let Ok(mut gpu_ptr_translator) = File::open("/dev/gpu_ptr_translator") {
+        if let Ok(gpu_ptr_translator) = File::open("/dev/gpu_ptr_translator") {
             if let res @ Ok(Some(_)) = get_pa_from_file(gpu_ptr_translator) {
                 return res;
             }
@@ -108,9 +116,10 @@ impl AddressResolver for PhysAddrResolverLinuxX86 {
 
     fn virt_to_phys_range(
         &self,
-        start_addr: u64,
+        start_addr: VirtAddr,
         num_pages: usize,
-    ) -> io::Result<Vec<Option<u64>>> {
+    ) -> io::Result<Vec<Option<PhysAddr>>> {
+        let start_addr_raw = start_addr.as_u64();
         let base_page_size = get_base_page_size();
         let mut phy_addrs = vec![None; num_pages];
         let mut file = File::open("/proc/self/pagemap")?;
@@ -118,7 +127,7 @@ impl AddressResolver for PhysAddrResolverLinuxX86 {
 
         let mut maybe_gpu_ptr = true;
 
-        let mut addr = start_addr;
+        let mut addr = start_addr_raw;
         for pa in &mut phy_addrs {
             let virt_pfn = addr / base_page_size;
             let offset = PFN_MASK_SIZE as u64 * virt_pfn;
@@ -127,8 +136,8 @@ impl AddressResolver for PhysAddrResolverLinuxX86 {
             let entry = u64::from_ne_bytes(buf);
             if (entry >> PAGE_PRESENT_BIT) & 1 != 0 {
                 let phys_pfn = entry & PFN_MASK;
-                let phys_addr = phys_pfn * base_page_size + start_addr % base_page_size;
-                *pa = Some(phys_addr);
+                let phys_addr = phys_pfn * base_page_size + start_addr_raw % base_page_size;
+                *pa = Some(PhysAddr::new(phys_addr));
 
                 maybe_gpu_ptr = false;
             }
@@ -143,7 +152,7 @@ impl AddressResolver for PhysAddrResolverLinuxX86 {
                 return Ok(phy_addrs);
             };
 
-            addr = start_addr;
+            addr = start_addr_raw;
             for pa in &mut phy_addrs {
                 let virt_pfn = addr / base_page_size;
                 let offset = PFN_MASK_SIZE as u64 * virt_pfn;
@@ -152,8 +161,8 @@ impl AddressResolver for PhysAddrResolverLinuxX86 {
                 let entry = u64::from_ne_bytes(buf);
                 if (entry >> PAGE_PRESENT_BIT) & 1 != 0 {
                     let phys_pfn = entry & PFN_MASK;
-                    let phys_addr = phys_pfn * base_page_size + start_addr % base_page_size;
-                    *pa = Some(phys_addr);
+                    let phys_addr = phys_pfn * base_page_size + start_addr_raw % base_page_size;
+                    *pa = Some(PhysAddr::new(phys_addr));
                 }
 
                 addr += PAGE_SIZE;
@@ -175,11 +184,14 @@ impl PhysAddrResolverEmulated {
 }
 
 impl AddressResolver for PhysAddrResolverEmulated {
-    fn virt_to_phys(&self, virt_addr: u64) -> io::Result<Option<u64>> {
+    fn virt_to_phys(&self, virt_addr: VirtAddr) -> io::Result<Option<PhysAddr>> {
+        let virt_addr_raw = virt_addr.as_u64();
         debug!(
-            "virt_addr = {virt_addr:x}, heap_start_addr={:x}\n",
+            "virt_addr = {virt_addr_raw:x}, heap_start_addr={:x}\n",
             self.heap_start_addr
         );
-        Ok(virt_addr.checked_sub(self.heap_start_addr))
+        Ok(virt_addr_raw
+            .checked_sub(self.heap_start_addr)
+            .map(PhysAddr::new))
     }
 }

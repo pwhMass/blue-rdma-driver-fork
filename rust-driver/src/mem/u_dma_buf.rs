@@ -85,7 +85,8 @@ impl UDmaBufAllocator {
         }
 
         let mmap = MmapMut::new(ptr, len);
-        let phys_addr = Self::phys_addr()? + self.offset as u64;
+        let phys_addr_raw = Self::phys_addr()? + self.offset as u64;
+        let phys_addr = crate::types::PhysAddr::new(phys_addr_raw);
 
         self.offset += len;
 
